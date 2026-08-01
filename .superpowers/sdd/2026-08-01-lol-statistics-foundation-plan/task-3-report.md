@@ -25,3 +25,18 @@ Added `@lol/database` with a concrete Drizzle PostgreSQL schema for patches, cat
 ## Self-review
 
 The migration is deterministic and checked in, table keys match the task contract, private PUUID/raw-slot fields remain confined to collection tables, and aggregate publication activation is constrained to one active row. Static typechecking, migration generation/checking, test execution, and whitespace checks passed. Live migration and integration assertions remain unverified solely because no PostgreSQL server is available.
+
+## Fix Round 1
+
+- Imported `ROLES` and `PatchKey` from `@lol/domain`; the role enum uses the shared runtime tuple, patch keys are typed and constrained to `major.minor` format, and `patches_one_active_idx` permits at most one active patch.
+- Added `patch_id` to participant core-item/boots rows with composite foreign keys to the exact participant observation and patch-scoped item catalog row. Added the observation identity/patch unique key needed by those references.
+- Added nonnegative wins/losses/sample checks to combination aggregates.
+- Regenerated `migrations/0000_initial.sql` and metadata; added focused source/migration contract assertions in `schema.contract.test.ts`.
+
+Fix verification:
+
+- `bunx vitest run packages/database/src/schema.contract.test.ts` — 4 passed.
+- `bun run typecheck` — all four workspaces passed.
+- `bun run db:generate` — no schema changes, nothing to migrate.
+- `bunx drizzle-kit check` — Everything's fine.
+- `git diff --check` — clean.
