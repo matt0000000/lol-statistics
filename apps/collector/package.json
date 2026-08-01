@@ -5,6 +5,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "catalog:sync": "tsx src/commands/sync-catalog.ts"
+    "catalog:sync": "bun src/commands/sync-catalog.ts"
+  },
+  "dependencies": {
+    "@lol/database": "workspace:*",
+    "@lol/item-catalog": "workspace:*"
   }
 }

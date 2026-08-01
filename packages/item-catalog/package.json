@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lol/database": "workspace:*",
     "@lol/domain": "workspace:*",
     "zod": "^4.4.3"
   }

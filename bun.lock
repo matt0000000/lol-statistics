@@ -18,6 +18,10 @@
     },
     "apps/collector": {
       "name": "@lol/collector",
+      "dependencies": {
+        "@lol/database": "workspace:*",
+        "@lol/item-catalog": "workspace:*",
+      },
     },
     "apps/web": {
       "name": "@lol/web",
@@ -45,6 +49,7 @@
     "packages/item-catalog": {
       "name": "@lol/item-catalog",
       "dependencies": {
+        "@lol/database": "workspace:*",
         "@lol/domain": "workspace:*",
         "zod": "^4.4.3",
       },
