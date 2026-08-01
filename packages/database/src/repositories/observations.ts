@@ -58,11 +58,8 @@ export class ObservationsRepository {
     if (!Number.isSafeInteger(patchId) || patchId < 1) throw new Error("invalid patch");
     const patch = (await tx.select().from(patches).where(eq(patches.id, patchId)).limit(1))[0];
     if (!patch) throw new Error("patch not found");
-    const discovered = await tx.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(eq(discoveredMatches.runId, runId)).limit(1);
-    if (discovered.length > 0) {
-      const found = await tx.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, match.metadata.matchId))).limit(1);
-      if (!found[0]) throw new Error("match does not belong to collection run");
-    }
+    const found = await tx.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, match.metadata.matchId))).limit(1);
+    if (!found[0]) throw new Error("match does not belong to collection run");
     if (patch.patchKey !== patchKey(match.info.gameVersion)) throw new Error("match patch mismatch");
 
     const accepted = participants.filter((part): part is Extract<ParsedParticipant, { accepted: true }> => part.accepted);
