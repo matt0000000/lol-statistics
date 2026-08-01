@@ -11,6 +11,28 @@
       "purchasable": true,
       "image": { "full": "3031.png" }
     },
+    "6672": {
+      "name": "Kraken Katili",
+      "description": "<mainText><stats><attention>45</attention> Saldırı Gücü</stats></mainText>",
+      "gold": { "base": 325, "purchasable": true, "total": 3000, "sell": 2100 },
+      "into": [],
+      "from": ["6690", "3051", "1043"],
+      "tags": ["Damage", "AttackSpeed", "OnHit", "NonbootsMovement"],
+      "maps": { "11": true, "12": true },
+      "purchasable": true,
+      "image": { "full": "6672.png" }
+    },
+    "3006": {
+      "name": "Savaşçı Çizmeleri",
+      "description": "<mainText><stats><attention>25</attention> Saldırı Hızı</stats></mainText>",
+      "gold": { "base": 300, "purchasable": true, "total": 1100, "sell": 770 },
+      "into": ["3172"],
+      "from": ["1001", "1042"],
+      "tags": ["AttackSpeed", "Boots"],
+      "maps": { "11": true, "12": true },
+      "purchasable": true,
+      "image": { "full": "3006.png" }
+    },
     "3172": {
       "name": "Bakır-Çinko Çizmeler",
       "description": "<mainText><stats><attention>45</attention> Hareket Hızı</stats></mainText>",

@@ -70,7 +70,7 @@ describe("DataDragonClient", () => {
     expect(loadRealmFixture(realmFixture).v).toBe("16.15.1");
     expect(Object.keys(loadChampionFixture(championFixture).data)).toEqual(["Aatrox"]);
     const items = loadItemFixture(itemFixture).data;
-    expect(Object.keys(items)).toHaveLength(9);
+    expect(Object.keys(items)).toHaveLength(11);
     expect(items["7002"].maps["11"]).toBe(true);
     expect(items["220000"].maps["11"]).toBe(false);
   });
