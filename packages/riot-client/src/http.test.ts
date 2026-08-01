@@ -254,6 +254,9 @@ describe("RiotHttpClient", () => {
       "/lol/%252e%252e/secret",
       "/lol/%2fsecret",
       "/lol/%5csecret",
+      "/lol/%252fsecret",
+      "/lol/%255csecret",
+      "/lol/%252e%252e/secret",
       "/lol\\secret",
       "/lol/%ZZ/secret",
       "//evil.example/secret",
@@ -264,6 +267,40 @@ describe("RiotHttpClient", () => {
       await expect(client.getJson({ ...request, path })).rejects.toMatchObject({ category: "schema", retryable: false });
     }
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("accepts canonical encoded query and identifier targets but rejects URL rewrites", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep: vi.fn() });
+    await client.getJson({ ...request, path: "/lol/summoner/by-name/A%20B?start=1&count=100" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    for (const path of [
+      "/lol/test?name=hello world",
+      "/lol/test?name=%",
+      "/lol/test?name=%ZZ",
+      "/lol/test?name=hello\u2028world",
+      "/lol/test?name=hello\u2029world",
+    ]) {
+      await expect(client.getJson({ ...request, path })).rejects.toMatchObject({ category: "schema", retryable: false });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces valid Riot DNS labels while accepting uppercase equivalents", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep: vi.fn() });
+    await client.getJson({ ...request, host: "TR1.API.RIOTGAMES.COM" });
+    for (const host of [
+      "-tr1.api.riotgames.com",
+      "tr1-.api.riotgames.com",
+      "tr1..api.riotgames.com",
+      "tr1.api.riotgames.com.",
+      "tr1.api.riotgames.com:443",
+      "tr1.api.riotgames.com@evil.example",
+    ]) {
+      await expect(client.getJson({ ...request, host })).rejects.toMatchObject({ category: "schema", retryable: false });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("rejects literal, encoded, and double-encoded API keys in paths or queries", async () => {

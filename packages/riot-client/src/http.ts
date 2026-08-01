@@ -109,27 +109,39 @@ function buildUrl(host: string, path: string, forbiddenValue: string): URL {
   const question = path.indexOf("?");
   const pathname = question < 0 ? path : path.slice(0, question);
   const query = question < 0 ? "" : path.slice(question + 1);
-  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname.includes("//") || pathname.includes("\\") || query.includes("\\") || path.includes("#") || path.includes("://") || path.includes("@") || /[\u0000-\u001f\u007f\r\n]/.test(path) || !validPercentEncoding(path) || containsDecodedSecret(path, forbiddenValue) || containsTraversal(pathname)) {
-    throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
+  if (!validHost(host) || !pathname.startsWith("/") || pathname.startsWith("//") || pathname.includes("//") || pathname.includes("\\") || query.includes("\\") || path.includes("#") || path.includes("://") || path.includes("@") || /[\u0000-\u001f\u007f\r\n]/.test(path) || !validPercentEncoding(path) || !validateDecodedLevels(pathname, true) || !validateDecodedLevels(query, false) || containsDecodedSecret(path, forbiddenValue)) failUnsafeUrl();
+  const target = pathname + (question < 0 ? "" : `?${query}`);
+  let url: URL;
+  try {
+    url = new URL(`https://${host}${path}`);
+  } catch {
+    failUnsafeUrl();
   }
-  if (!/^[A-Za-z0-9.-]+\.api\.riotgames\.com$/.test(host) || host.includes("..")) {
-    throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
-  }
-  const url = new URL(`https://${host}${path}`);
-  if (url.protocol !== "https:" || url.username || url.password || url.hash || url.pathname !== pathname) {
-    throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
-  }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash || `${url.pathname}${url.search}` !== target) failUnsafeUrl();
   return url;
 }
 
 function validPercentEncoding(value: string): boolean {
-  return !/%(?![0-9A-Fa-f]{2})/.test(value) && !/%(?:2f|5c)/i.test(value);
+  return !/%(?![0-9A-Fa-f]{2})/.test(value);
 }
 
-function containsTraversal(pathname: string): boolean {
-  const decoded = decodeRepeated(pathname);
-  if (decoded === null || decoded.includes("\\") || /(?:^|\/)\.{1,2}(?:\/|$)/.test(pathname) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(decoded)) return true;
-  return decoded !== pathname && /(?:^|\/)\.{1,2}(?:\/|$)/.test(decoded);
+function validateDecodedLevels(value: string, pathname: boolean): boolean {
+  let current = value;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (!validPercentEncoding(current)) return false;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      return false;
+    }
+    if (pathname && decoded.split("/").length !== current.split("/").length) return false;
+    if (decoded.includes("\\") || decoded.includes("#") || /[\u0000-\u001f\u007f\r\n]/.test(decoded)) return false;
+    if (pathname && /(?:^|\/)\.{1,2}(?:\/|$)/.test(decoded)) return false;
+    if (decoded === current) return true;
+    current = decoded;
+  }
+  return false;
 }
 
 function containsDecodedSecret(value: string, secret: string): boolean {
@@ -151,4 +163,17 @@ function decodeRepeated(value: string): string | null {
     current = decoded;
   }
   return current;
+}
+
+function validHost(host: string): boolean {
+  if (host.length > 253) return false;
+  const labels = host.split(".");
+  if (labels.length < 4) return false;
+  const suffix = labels.slice(-3).map((label) => label.toLowerCase()).join(".");
+  if (suffix !== "api.riotgames.com") return false;
+  return labels.every((label) => label.length >= 1 && label.length <= 63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label));
+}
+
+function failUnsafeUrl(): never {
+  throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
 }
