@@ -85,3 +85,31 @@ EXIT_STATUS=1
 ```
 
 Fix-round code/tests commit: `57f5b03c16ec74d2af1aa85afe23660166ce052a` (`fix: enforce canonical aggregate publication invariants`).
+
+## Fix round 2 (trust boundary/catalog)
+
+- Removed aggregate activation internals from the `@lol/database` package export surface. Production publication now accepts only IDs plus a branded `Database` returned by `createDatabase`; fake structural databases and caller snapshots are rejected before any transaction.
+- Canonical SQL locking/loading and activation are module-private to the collector publication service. Activation conditionally updates exactly one target, run, and patch row and has no tautological success path.
+- Empty catalogs now fail with `CATALOG_MISSING`; production integration fixtures seed official-like CORE and BOOTS rows. Test-database helpers expose the isolated URL so production tests can create a branded connection.
+- Added pure empty-catalog/trust-boundary coverage and retained isolated aggregate/publication integration cases.
+
+Fix-round-2 verification:
+
+- `bunx vitest run apps/collector/src/services/publish.test.ts apps/collector/src/services/rebuild-aggregates.test.ts` — PASS (9 tests).
+- `bunx vitest run` — PASS (164 tests), 6 PostgreSQL-gated suites skipped.
+- `bun run typecheck` — PASS for all workspaces.
+- `bunx drizzle-kit check` — PASS.
+- `bun run db:generate` — PASS; no schema changes.
+- `git diff --check` — PASS.
+
+Actual new integration suites with PostgreSQL URL:
+
+```text
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts
+Error: connect ECONNREFUSED 127.0.0.1:5432
+Test Files 2 failed (2)
+Tests 2 failed (2)
+EXIT_STATUS=1
+```
+
+Fix-round-2 product commit: `685636e5da31ccef3592616639f4737ee30b1402` (`fix: harden canonical publication trust boundary`).
