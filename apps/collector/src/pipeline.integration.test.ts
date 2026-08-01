@@ -42,7 +42,7 @@ suite("collector pipeline PostgreSQL restart durability", () => {
       const deps = {
         runs: runs as any,
         coverageDays: 35,
-        minimumSample: 0,
+        minimumSample: 100,
         stageHandlers: {
           CATALOG: async (run: any) => { await runs.bindPatch(run.id, patch!.id); },
           LADDER: async (run: any) => ladder.snapshotLadder(run.id, [{ puuid: "player-1", tier: "EMERALD", rank: "I", queueType: "RANKED_SOLO_5x5" }]),
@@ -57,7 +57,7 @@ suite("collector pipeline PostgreSQL restart durability", () => {
               if (injectCrash && fetched.get(row.matchId) === 1 && [...fetched.values()].reduce((a, b) => a + b, 0) === 2) { injectCrash = false; throw new Error("injected fetch failure"); }
             }
           },
-          AGGREGATES: async (run: any) => { const target = await aggregates.ensurePublicationTarget({ runId: run.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 0 }); await rebuildAggregates({ publicationId: target.id, runId: run.id, patchId: patch!.id, source: async (cursor, size) => aggregates.observationPage(patch!.id, cursor as any, size), sink: aggregates, catalog: new Map([[3031, { itemId: 3031, category: "CORE", normalizedBaseId: 3031 }], [3006, { itemId: 3006, category: "BOOTS", normalizedBaseId: 3006 }]]) }); },
+          AGGREGATES: async (run: any) => { const target = await aggregates.ensurePublicationTarget({ runId: run.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 100 }); await rebuildAggregates({ publicationId: target.id, runId: run.id, patchId: patch!.id, source: async (cursor, size) => aggregates.observationPage(patch!.id, cursor as any, size), sink: aggregates, catalog: new Map([[3031, { itemId: 3031, category: "CORE", normalizedBaseId: 3031 }], [3006, { itemId: 3006, category: "BOOTS", normalizedBaseId: 3006 }]]) }); },
           VERIFY: async (run: any) => { const report = await verifyPublication({ publicationId: run.publicationId, runId: run.id, database: isolated as any }); if (!report.valid) throw new Error("verify failed"); },
           PUBLISH: async (run: any) => publishAtomically({ publicationId: run.publicationId, runId: run.id, database: isolated as any })
         }
@@ -67,7 +67,7 @@ suite("collector pipeline PostgreSQL restart durability", () => {
       await runCollection(deps);
       expect(fetched.get("TR1_1")).toBe(1); expect(fetched.get("TR1_2")).toBe(1); expect(fetched.get("TR1_3")).toBe(1);
       expect((await isolated.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true))).length).toBe(1);
-      const discovered = await isolated.db.select().from(discoveredMatches).where(eq(discoveredMatches.runId, (await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 35, minimumSample: 0 })).id));
+      const discovered = await isolated.db.select().from(discoveredMatches).where(eq(discoveredMatches.runId, (await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 35, minimumSample: 100 })).id));
       expect(discovered).toHaveLength(3);
       expect(await isolated.db.select().from(matches).where(eq(matches.patchId, patch!.id))).toHaveLength(3);
       const sourceRows = await isolated.db.select().from(participantObservations).where(eq(participantObservations.patchId, patch!.id));
@@ -75,12 +75,12 @@ suite("collector pipeline PostgreSQL restart durability", () => {
       expect(new Set(sourceRows.map((row) => `${row.matchId}:${row.participantId}`))).toEqual(new Set(["TR1_1:1", "TR1_2:1", "TR1_3:1"]));
       const [completedRun] = await isolated.db.select().from(collectionRuns).where(eq(collectionRuns.status, "COMPLETED")).limit(1);
       const [activePublication] = await isolated.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true));
-      expect(activePublication?.minimumSample).toBe(0);
+      expect(activePublication?.minimumSample).toBe(100);
       expect(await isolated.db.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, activePublication!.id))).toEqual(expect.arrayContaining([expect.objectContaining({ championId: 1, role: "TOP", wins: 3, losses: 0, sample: 3 })]));
       expect(await isolated.db.select().from(itemAggregates).where(eq(itemAggregates.publicationId, activePublication!.id))).toEqual(expect.arrayContaining([expect.objectContaining({ championId: 1, role: "TOP", itemId: 3031, wins: 3, losses: 0, sample: 3 })]));
       const targets = await Promise.all([
-        aggregates.ensurePublicationTarget({ runId: completedRun!.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 0 }),
-        aggregates.ensurePublicationTarget({ runId: completedRun!.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 0 })
+        aggregates.ensurePublicationTarget({ runId: completedRun!.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 100 }),
+        aggregates.ensurePublicationTarget({ runId: completedRun!.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 100 })
       ]);
       expect(targets[0].id).toBe(targets[1].id);
       const third = await runCollection(deps); expect(third).toBe((await isolated.db.select({ id: collectionRuns.id }).from(collectionRuns).where(eq(collectionRuns.status, "COMPLETED")).limit(1))[0]?.id);
@@ -101,7 +101,7 @@ suite("collector pipeline PostgreSQL restart durability", () => {
         runs: new CollectionRunRepository(database.db) as any,
         patchId: patch!.id,
         coverageDays: 35,
-        minimumSample: 2,
+        minimumSample: 101,
         advisoryLock: database.withAdvisoryLock,
         stageHandlers: overlapHandlers
       });
@@ -118,12 +118,12 @@ suite("collector pipeline PostgreSQL restart durability", () => {
         await firstOverlap.catch(() => undefined);
         await lockDb1.close(); await lockDb2.close();
       }
-      const differentCoverage = await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 34, minimumSample: 0 });
+      const differentCoverage = await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 34, minimumSample: 100 });
       expect(differentCoverage.id).not.toBe(third);
-      const differentSample = await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 35, minimumSample: 1 });
+      const differentSample = await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 35, minimumSample: 101 });
       expect(differentSample.id).not.toBe(third);
       const [mismatchedPatch] = await isolated.db.insert(patches).values({ version: `99.8.${now}`, patchKey: "99.8", isActive: false }).returning();
-      const differentPatch = await runs.resumeOrCreate({ patchId: mismatchedPatch!.id, coverageDays: 35, minimumSample: 0 });
+      const differentPatch = await runs.resumeOrCreate({ patchId: mismatchedPatch!.id, coverageDays: 35, minimumSample: 100 });
       expect(differentPatch.id).not.toBe(third);
     } finally { await isolated.close(); }
   });

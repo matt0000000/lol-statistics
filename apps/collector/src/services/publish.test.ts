@@ -12,6 +12,26 @@ const base = (overrides: Partial<PublishSnapshot> = {}): PublishSnapshot => ({
   ...overrides
 });
 
+const lowSampleSnapshot = (): PublishSnapshot => base({
+  publication: { ...base().publication!, minimumSample: 100 },
+  itemCatalog: new Map([
+    [3031, { itemId: 3031, category: "CORE", normalizedBaseId: 3031 }],
+    [6672, { itemId: 6672, category: "CORE", normalizedBaseId: 6672 }],
+    [3085, { itemId: 3085, category: "CORE", normalizedBaseId: 3085 }],
+    [3006, { itemId: 3006, category: "BOOTS", normalizedBaseId: 3006 }]
+  ]),
+  baseline: [{ championId: 1, role: "TOP", wins: 1, losses: 0, sample: 1 }],
+  items: [3031, 6672, 3085].map((itemId) => ({ championId: 1, role: "TOP", itemId, wins: 1, losses: 0, sample: 1 })),
+  combinations: [
+    { championId: 1, role: "TOP", size: 2, combinationKey: "3031:6672", wins: 1, losses: 0, sample: 1 },
+    { championId: 1, role: "TOP", size: 2, combinationKey: "3031:3085", wins: 1, losses: 0, sample: 1 },
+    { championId: 1, role: "TOP", size: 2, combinationKey: "3085:6672", wins: 1, losses: 0, sample: 1 },
+    { championId: 1, role: "TOP", size: 3, combinationKey: "3031:3085:6672", wins: 1, losses: 0, sample: 1 }
+  ],
+  boots: [{ championId: 1, role: "TOP", itemId: 3006, wins: 1, losses: 0, sample: 1 }],
+  observations: [{ championId: 1, role: "TOP", matchId: "m1", participantId: 1, win: true, items: [3031, 6672, 3085], boots: 3006, patchId: 1, queueId: 420, platformId: "TR1", validationState: "VALID" }]
+});
+
 describe("publication verification", () => {
   it("reports deterministic count equation and missing baseline failures", async () => {
     const result = await verifyPublicationSnapshot(base({ baseline: [], items: [{ championId: 1, role: "TOP", itemId: 3031, wins: 2, losses: 0, sample: 1 }] }));
@@ -32,10 +52,8 @@ describe("publication verification", () => {
     expect(result.failures).toContainEqual({ code: "CATALOG_MISSING", count: 1 });
   });
 
-  it("enforces the stored publication minimum sample", async () => {
-    const result = await verifyPublicationSnapshot(base({
-      publication: { ...base().publication!, minimumSample: 3 }
-    }));
-    expect(result.failures).toContainEqual({ code: "MINIMUM_SAMPLE", count: 1 });
+  it("keeps low-sample baseline, item, combination, and boots rows publishable", async () => {
+    const result = await verifyPublicationSnapshot(lowSampleSnapshot());
+    expect(result).toEqual({ valid: true, failures: [] });
   });
 });

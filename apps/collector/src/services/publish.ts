@@ -64,8 +64,6 @@ export async function verifyPublicationSnapshot(input: PublishSnapshot): Promise
     duplicateAgg.add(`b:${key}`);
     if (!equation(row)) countFailure(failures, "COUNT_EQUATION");
     baselineByGroup.set(key, row);
-    const minimumSample = Number(input.publication?.minimumSample ?? 0);
-    if (Number.isSafeInteger(minimumSample) && minimumSample > 0 && Number(row.sample) < minimumSample) countFailure(failures, "MINIMUM_SAMPLE");
   }
   const allAgg = [
     ...aggregates.items.map((row) => ({ ...row, __kind: "item" })),
