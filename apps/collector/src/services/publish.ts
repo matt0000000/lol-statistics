@@ -53,7 +53,7 @@ export async function verifyPublicationSnapshot(input: PublishSnapshot): Promise
   const catalog = input.itemCatalog;
   if (!input.publication || input.publication.id !== input.publicationId || input.publication.patchId !== input.patchId || input.publication.runId !== input.runId || input.publication.isActive) countFailure(failures, "PUBLICATION_NOT_ELIGIBLE");
   if (!input.patch || input.patch.id !== input.patchId || !input.patch.isActive) countFailure(failures, "PATCH_NOT_CURRENT");
-  if (!input.run || input.run.id !== input.runId || input.run.status !== "RUNNING" || (input.run.stage !== undefined && input.run.stage !== "publish") || (input.run.publicationId && input.run.publicationId !== input.publicationId)) countFailure(failures, "RUN_NOT_ELIGIBLE");
+  if (!input.run || input.run.id !== input.runId || input.run.status !== "RUNNING" || (input.run.stage !== undefined && input.run.stage !== "publish" && input.run.stage !== "verify") || (input.run.publicationId && input.run.publicationId !== input.publicationId)) countFailure(failures, "RUN_NOT_ELIGIBLE");
   if (!catalog || catalog.size === 0) countFailure(failures, "CATALOG_MISSING");
 
   const baselineByGroup = new Map<string, any>();

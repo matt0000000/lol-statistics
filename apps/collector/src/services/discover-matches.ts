@@ -11,7 +11,11 @@ export type DiscoverMatchesInput = {
 
 export type DiscoveryErrorCode = "invalid_input" | "invalid_response" | "invalid_checkpoint" | "dependency_failure";
 export class DiscoveryServiceError extends Error {
-  constructor(readonly code: DiscoveryErrorCode, message = `match discovery failed (${code})`) { super(message); }
+  readonly category?: "auth" | "rate_limit" | "server" | "network";
+  constructor(readonly code: DiscoveryErrorCode, message = `match discovery failed (${code})`, options: { cause?: unknown } = {}) {
+    super(message, options);
+    this.category = safeCategory(options.cause);
+  }
 }
 
 export async function discoverMatches(input: DiscoverMatchesInput): Promise<void> {
@@ -20,24 +24,30 @@ export async function discoverMatches(input: DiscoverMatchesInput): Promise<void
     const startTime = Math.floor(input.coverageStart.getTime() / 1_000);
     let start: number;
     try { start = await input.repository.loadOffset(input.runId, input.puuid); }
-    catch { throw new DiscoveryServiceError("dependency_failure"); }
+    catch (cause) { throw new DiscoveryServiceError("dependency_failure", undefined, { cause }); }
     try { validateOffset(start); } catch { throw new DiscoveryServiceError("invalid_checkpoint"); }
     for (;;) {
       let ids: string[];
       try { ids = await input.matchClient.listMatchIds({ puuid: input.puuid, startTime, start }); }
-      catch { throw new DiscoveryServiceError("dependency_failure"); }
+      catch (cause) { throw new DiscoveryServiceError("dependency_failure", undefined, { cause }); }
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !/^TR1_[0-9]+$/.test(id)) || ids.length > 100) throw new DiscoveryServiceError("invalid_response");
       const next = start + ids.length;
       if (!Number.isSafeInteger(next) || next <= start && ids.length > 0) throw new DiscoveryServiceError("invalid_checkpoint");
       try { await input.repository.savePage(input.runId, input.puuid, next, ids); }
-      catch { throw new DiscoveryServiceError("dependency_failure"); }
+      catch (cause) { throw new DiscoveryServiceError("dependency_failure", undefined, { cause }); }
       start = next;
       if (ids.length < 100) return;
     }
   } catch (error) {
     if (error instanceof DiscoveryServiceError) throw error;
-    throw new DiscoveryServiceError("dependency_failure");
+    throw new DiscoveryServiceError("dependency_failure", undefined, { cause: error });
   }
+}
+
+function safeCategory(error: unknown): DiscoveryServiceError["category"] {
+  if (!error || typeof error !== "object") return undefined;
+  const category = (error as { category?: unknown }).category;
+  return category === "auth" || category === "rate_limit" || category === "server" || category === "network" ? category : undefined;
 }
 
 function validateInput(input: DiscoverMatchesInput): void {

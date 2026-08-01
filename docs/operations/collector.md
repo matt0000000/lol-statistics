@@ -11,11 +11,11 @@ VERIFY → PUBLISH state machine. Completed stages are not repeated. Failed runs
 resume only when the active patch, 35-day coverage window, and minimum sample
 of 100 match the original run.
 
-The CLI constructs the real Riot and Data Dragon clients and runs catalog and
-ladder stages. Deployments must provide the repository-backed discovery,
-ingestion, aggregate, verification, and publication worker coordinator; if a
-worker is absent, collection fails closed with invariant exit `3` and cannot
-claim a successful publication.
+The CLI constructs the real Riot and Data Dragon clients and runs every stage
+through repository-backed discovery, ingestion, aggregate, verification, and
+publication services. A completed run is scheduler-idempotent only while its
+owned publication remains active; a stale completed run fails closed for
+operator inspection.
 
 Exit codes are stable for schedulers: `0` success, `2` authentication or an
 expired development key, `3` publication invariant failure, and `4` exhausted
@@ -26,7 +26,10 @@ production Riot key with the required regional permissions.
 Schedule one run hourly. Overlap is prevented by a PostgreSQL advisory lock;
 the lock is released in a `finally` path on success, failure, and process
 errors. If a process is terminated, PostgreSQL releases its session lock and
-the next invocation can safely resume persisted checkpoints.
+the next invocation can safely resume persisted checkpoints. Canonical matches
+already durably ingested are not fetched again. A crash before a match row is
+committed may cause that match to be fetched again; the checkpoint boundary is
+at durable match ingestion, not at the network request.
 
 `bun run collector:health -- --json` emits only the active patch, run status,
 stage, data age, safe counters, unknown-item count, and a public error

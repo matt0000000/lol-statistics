@@ -103,6 +103,13 @@ export class CollectionRunRepository {
     return updated;
   }
 
+  /** Checks publication ownership and active state without mutating a terminal run. */
+  async isActivePublication(run: CollectionRun): Promise<boolean> {
+    if (run.status !== "COMPLETED" || !run.publicationId) return false;
+    const rows = await this.db.execute(sql`SELECT 1 FROM aggregate_publications WHERE id = ${run.publicationId} AND run_id = ${run.id} AND is_active = true LIMIT 1`);
+    return rows.length > 0;
+  }
+
   async createOrResume(runId?: string): Promise<CollectionRun> {
     if (runId) {
       const existing = await this.get(runId);

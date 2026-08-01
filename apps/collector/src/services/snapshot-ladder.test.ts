@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { snapshotLadder } from "./snapshot-ladder";
+import { RiotHttpError } from "@lol/riot-client";
 
 describe("snapshotLadder", () => {
   it("redacts dependency failures", async () => {
@@ -18,5 +19,10 @@ describe("snapshotLadder", () => {
 
   it("uses a static invalid_input diagnostic", async () => {
     await expect(snapshotLadder({ runId: "", leagueClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input", message: "ladder snapshot failed (invalid_input)" });
+  });
+
+  it("preserves a safe dependency cause/category", async () => {
+    const cause = new RiotHttpError("private detail", 403, false, "auth");
+    await expect(snapshotLadder({ runId: "run", leagueClient: { listEligiblePlayers: async () => { throw cause; } }, repository: { snapshotLadder: async () => {} } })).rejects.toMatchObject({ code: "dependency_failure", category: "auth", cause });
   });
 });

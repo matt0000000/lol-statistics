@@ -83,21 +83,15 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
         },
         AGGREGATES: async (run) => {
           if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
-          let publicationId = typeof run.publicationId === "string" ? run.publicationId : undefined;
-          if (!publicationId) {
-            const [publication] = await database!.db.insert(aggregatePublications).values({ patchId: run.patchId, runId: run.id, coverageStartedAt: new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000), minimumSample: run.minimumSample ?? 100 }).returning({ id: aggregatePublications.id });
-            if (!publication) throw new Error("publication could not be created");
-            publicationId = publication.id;
-            await runs.bindPublication(run.id, publicationId);
-          }
           const aggregateRepo = new AggregatesRepository(database!.db);
+          const publication = await aggregateRepo.ensurePublicationTarget({ runId: run.id, patchId: run.patchId, coverageStartedAt: new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000), minimumSample: run.minimumSample ?? 100 });
+          const publicationId = publication.id;
           const catalogRows = await database!.db.select().from(items).where(eq(items.patchId, run.patchId));
           const source = async (cursor: unknown, pageSize: number) => aggregateRepo.observationPage(run.patchId!, cursor as any, pageSize);
           await rebuildAggregates({ publicationId, runId: run.id, patchId: run.patchId, source, sink: aggregateRepo, catalog: new Map(catalogRows.map((row) => [row.itemId, row])) });
         },
         VERIFY: async (run) => {
           if (typeof run.publicationId !== "string" || !run.patchId) throw Object.assign(new Error("publication owner is missing"), { invariant: true });
-          await runs.updateStage(run.id, "publish");
           const report = await verifyPublication({ publicationId: run.publicationId, runId: run.id, database: database! });
           if (!report.valid) throw Object.assign(new Error("publication invariants failed"), { invariant: true });
         },

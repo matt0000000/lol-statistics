@@ -10,6 +10,26 @@ const tables = [baselineAggregates, itemAggregates, combinationAggregates, boots
 
 export class AggregatesRepository {
   constructor(private readonly db: any) {}
+
+  /** Atomically obtains the single publication target owned by a run, creating
+   * it and binding the run while holding the run row lock. */
+  async ensurePublicationTarget(input: { runId: string; patchId: number; coverageStartedAt: Date; minimumSample: number }): Promise<{ id: string }> {
+    return this.db.transaction(async (tx: Tx) => {
+      const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, input.runId)).for("update").limit(1))[0];
+      if (!run) throw new Error("collection run not found");
+      if (run.patchId !== input.patchId) throw new Error("publication patch owner mismatch");
+      const existing = (await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.runId, input.runId)).for("update").limit(1))[0];
+      if (existing) {
+        if (run.publicationId && run.publicationId !== existing.id) throw new Error("collection run publication owner mismatch");
+        if (!run.publicationId) await tx.update(collectionRuns).set({ publicationId: existing.id, updatedAt: new Date() }).where(eq(collectionRuns.id, input.runId));
+        return existing;
+      }
+      const [created] = await tx.insert(aggregatePublications).values({ patchId: input.patchId, runId: input.runId, coverageStartedAt: input.coverageStartedAt, minimumSample: input.minimumSample }).returning({ id: aggregatePublications.id });
+      if (!created) throw new Error("publication could not be created");
+      await tx.update(collectionRuns).set({ publicationId: created.id, updatedAt: new Date() }).where(eq(collectionRuns.id, input.runId));
+      return created;
+    });
+  }
   private preparedOwner?: { publicationId: string; runId: string; patchId: number };
   private prepareAttempted = false;
 

@@ -30,6 +30,7 @@ export type PipelineDependencies = {
     markFailed?: (runId: string, category: FailureCategory, detail: Record<string, unknown>, stage: CollectionStage) => Promise<unknown>;
     markRunning?: (runId: string) => Promise<unknown>;
     get?: (runId: string) => Promise<PipelineRun | undefined>;
+    isActivePublication?: (run: PipelineRun) => Promise<boolean>;
   };
   stageHandlers: Partial<Record<CollectionStage, (run: PipelineRun) => Promise<unknown>>> & Record<string, (run: PipelineRun) => Promise<unknown>>;
   advisoryLock?: { withLock<T>(fn: () => Promise<T>): Promise<T> } | ((fn: () => Promise<unknown>) => Promise<unknown>);
@@ -49,6 +50,15 @@ export async function runCollection(dependencies: PipelineDependencies): Promise
       coverageDays: dependencies.coverageDays ?? 35,
       minimumSample: dependencies.minimumSample ?? 100
     });
+    // Scheduler retries of an already-published configuration are no-ops. Never
+    // transition a terminal run back to RUNNING (or invoke workers) on retry.
+    if (run.status === "COMPLETED") {
+      const active = dependencies.runs.isActivePublication
+        ? await dependencies.runs.isActivePublication(run)
+        : Boolean(run.publicationId);
+      if (active) return run.id;
+      throw Object.assign(new Error("completed collection run has no active publication"), { invariant: true });
+    }
     await dependencies.runs.markRunning?.(run.id);
     let activeStage: CollectionStage = currentStage(run);
     try {
@@ -74,17 +84,26 @@ export async function runCollection(dependencies: PipelineDependencies): Promise
 }
 
 export function classifyFailure(error: unknown): FailureCategory {
-  if (error instanceof PublicationInvariantError || (error && typeof error === "object" && (error as { invariant?: boolean }).invariant === true)) return "invariant";
-  if (error && typeof error === "object") {
-    const candidate = error as { category?: string; status?: number; retryable?: boolean; exhausted?: boolean };
-    if (candidate.category === "auth" || candidate.status === 401 || candidate.status === 403) return "auth";
-    if (candidate.exhausted === true || candidate.category === "rate_limit" || candidate.category === "server" || candidate.category === "network" || candidate.retryable === true) return "exhausted_transient";
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof PublicationInvariantError || (typeof current === "object" && (current as { invariant?: boolean }).invariant === true)) return "invariant";
+    if (typeof current === "object") {
+      const candidate = current as { category?: string; status?: number; retryable?: boolean; exhausted?: boolean; cause?: unknown };
+      if (candidate.category === "auth" || candidate.status === 401 || candidate.status === 403) return "auth";
+      if (candidate.category === "invariant") return "invariant";
+      if (candidate.category === "exhausted_transient" || candidate.exhausted === true || candidate.category === "rate_limit" || candidate.category === "server" || candidate.category === "network" || candidate.retryable === true) return "exhausted_transient";
+      current = candidate.cause;
+      continue;
+    }
+    break;
   }
   return "unknown";
 }
 
 export function exitCodeForError(error: unknown): number {
-  const category = error && typeof error === "object" && "category" in error ? (error as { category?: string }).category : classifyFailure(error);
+  const category = classifyFailure(error);
   return category === "auth" ? 2 : category === "invariant" ? 3 : category === "exhausted_transient" ? 4 : error ? 1 : 0;
 }
 

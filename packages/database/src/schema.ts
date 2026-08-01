@@ -255,6 +255,7 @@ export const aggregatePublications = pgTable(
   },
   (table) => [
     uniqueIndex("aggregate_publications_one_active_idx").on(table.isActive).where(sql`${table.isActive} = true`),
+    uniqueIndex("aggregate_publications_one_per_run_idx").on(table.runId),
     check("aggregate_publications_minimum_sample_nonnegative", sql`${table.minimumSample} >= 0`)
   ]
 );
@@ -335,7 +336,7 @@ export const schemaContract = {
   participantRejections: "pk(match_id, participant_id), fk(match_id, patch_id)",
   participantCoreItems: "pk(match_id, participant_id, slot_index)",
   participantBoots: "pk(match_id, participant_id)",
-  aggregatePublications: "pk(id), unique active partial index",
+  aggregatePublications: "pk(id), unique run target, unique active partial index",
   itemAggregates: "pk(publication_id, champion_id, role, item_id)",
   baselineAggregates: "pk(publication_id, champion_id, role)",
   combinationAggregates: "pk(publication_id, champion_id, role, size, combination_key)",

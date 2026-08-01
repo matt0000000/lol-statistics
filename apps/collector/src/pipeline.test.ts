@@ -52,4 +52,19 @@ describe("resumable collection pipeline", () => {
     expect(exitCodeForError({ category: "exhausted_transient" })).toBe(4);
     expect(exitCodeForError(new Error("unknown"))).toBe(1);
   });
+
+  it("returns a completed run with its active publication without rerunning stages", async () => {
+    const completed = harness();
+    const handlers = completed.handlers;
+    (completed.dependencies.runs.resumeOrCreate as any).mockResolvedValue({ ...completed.run, status: "COMPLETED", publicationId: "pub-1" });
+    (completed.dependencies.runs.isActivePublication as any) = vi.fn(async () => true);
+    await expect(runCollection(completed.dependencies)).resolves.toBe("run-1");
+    expect(completed.dependencies.runs.markRunning).not.toHaveBeenCalled();
+    expect(handlers.CATALOG).not.toHaveBeenCalled();
+  });
+
+  it("classifies wrapped Riot failures through their safe cause", () => {
+    expect(exitCodeForError(new Error("wrapped", { cause: { category: "auth", status: 403 } }))).toBe(2);
+    expect(exitCodeForError(new Error("wrapped", { cause: { category: "rate_limit" } }))).toBe(4);
+  });
 });
