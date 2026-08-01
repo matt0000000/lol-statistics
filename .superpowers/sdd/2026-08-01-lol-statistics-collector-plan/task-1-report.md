@@ -10,6 +10,22 @@ Implemented the typed Riot HTTP client with a per-instance rate-limit gate, dete
 - `bun run typecheck` — all workspace packages passed.
 - `git diff --check` — passed.
 
+## Fix Round 2
+
+Implementation and regression tests are in commit `6998d3f9bee9484eb1ec58837328302f53490ea9`.
+
+- Network retries now require the concrete native `TypeError` predicate; arbitrary marker objects, transport-code objects, DOM exceptions, and programmer errors propagate unchanged.
+- URL validation rejects literal/encoded/double-encoded traversal, encoded slash/backslash, malformed percent escapes, protocol-relative paths, credential/fragment/control confusion, and canonical-path rewrites before URL construction.
+- Literal, encoded, and double-encoded API-key forms are rejected in path/query input without exposing the key in errors.
+- Added deterministic Retry-After fallback, jitter cap, valid multi-window app/method gating, spoof-marker, and traversal/API-key regression coverage.
+
+Fix Round 2 verification:
+
+- `bunx vitest run packages/riot-client/src/http.test.ts` — 27 passed.
+- `bunx vitest run` — 9 files passed, 2 skipped; 86 passed, 6 skipped.
+- `bun run typecheck` — all workspace packages passed.
+- `git diff --check` — passed.
+
 ## Files
 
 - `packages/riot-client/package.json`
