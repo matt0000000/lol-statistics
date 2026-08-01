@@ -1,0 +1,103 @@
+{
+  "data": {
+    "3031": {
+      "name": "Ebedi Kılıç",
+      "description": "<mainText><stats><attention>75</attention> Saldırı Gücü</stats></mainText>",
+      "gold": { "base": 725, "purchasable": true, "total": 3500, "sell": 2450 },
+      "into": [],
+      "from": ["1038", "1037", "1018"],
+      "tags": ["CriticalStrike", "Damage"],
+      "maps": { "11": true, "12": true },
+      "purchasable": true,
+      "image": { "full": "3031.png" }
+    },
+    "3172": {
+      "name": "Bakır-Çinko Çizmeler",
+      "description": "<mainText><stats><attention>45</attention> Hareket Hızı</stats></mainText>",
+      "gold": { "base": 0, "purchasable": true, "total": 1100, "sell": 770 },
+      "into": [],
+      "from": ["3006"],
+      "tags": ["AttackSpeed", "LifeSteal", "NonbootsMovement"],
+      "maps": { "11": true, "12": false },
+      "purchasable": true,
+      "image": { "full": "3172.png" }
+    },
+    "1038": {
+      "name": "TEK Kılıcı",
+      "description": "<mainText><stats><attention>40</attention> Saldırı Gücü</stats></mainText>",
+      "gold": { "base": 1300, "purchasable": true, "total": 1300, "sell": 910 },
+      "into": ["3031", "3026", "3072"],
+      "from": [],
+      "tags": ["Damage"],
+      "maps": { "11": true, "12": true },
+      "purchasable": true,
+      "image": { "full": "1038.png" }
+    },
+    "1055": {
+      "name": "Doran'ın Kılıcı",
+      "description": "<mainText><stats><attention>10</attention> Saldırı Gücü</stats></mainText>",
+      "gold": { "base": 450, "purchasable": true, "total": 450, "sell": 180 },
+      "into": [],
+      "from": [],
+      "tags": ["Health", "Damage", "Lane"],
+      "maps": { "11": true, "12": true },
+      "purchasable": true,
+      "image": { "full": "1055.png" }
+    },
+    "2003": {
+      "name": "Can İksiri",
+      "description": "<mainText><active>Tüket</active></mainText>",
+      "gold": { "base": 50, "purchasable": true, "total": 50, "sell": 20 },
+      "into": [],
+      "from": [],
+      "tags": ["HealthRegen", "Consumable", "Lane"],
+      "maps": { "11": true, "12": true },
+      "purchasable": true,
+      "image": { "full": "2003.png" }
+    },
+    "3340": {
+      "name": "Görünmez Totem",
+      "description": "<mainText><active>Aktif</active></mainText>",
+      "gold": { "base": 0, "purchasable": true, "total": 0, "sell": 0 },
+      "into": [],
+      "from": [],
+      "tags": ["Active", "Trinket", "Vision"],
+      "maps": { "11": true, "12": false },
+      "purchasable": true,
+      "image": { "full": "3340.png" }
+    },
+    "3865": {
+      "name": "Dünya Atlası",
+      "description": "",
+      "gold": { "base": 400, "purchasable": true, "total": 400, "sell": 160 },
+      "into": [],
+      "from": [],
+      "tags": ["Health", "Vision", "GoldPer", "Lane"],
+      "maps": { "11": true, "12": false },
+      "purchasable": true,
+      "image": { "full": "3865.png" }
+    },
+    "7002": {
+      "name": "Draktharr'ın Gölgeoyanı",
+      "description": "<mainText><stats><ornnBonus>75</ornnBonus> Saldırı Gücü</stats></mainText>",
+      "gold": { "base": 0, "purchasable": false, "total": 3100, "sell": 2170 },
+      "into": [],
+      "from": ["6691"],
+      "tags": ["Damage", "ArmorPenetration", "AbilityHaste"],
+      "maps": { "11": true, "12": true },
+      "purchasable": false,
+      "image": { "full": "7002.png" }
+    },
+    "220000": {
+      "name": "Nitelik İlavesi",
+      "description": "<mainText><active>Tüket</active></mainText>",
+      "gold": { "base": 750, "purchasable": true, "total": 750, "sell": 375 },
+      "into": [],
+      "from": [],
+      "tags": ["Consumable", "AbilityHaste"],
+      "maps": { "11": false, "30": true },
+      "purchasable": true,
+      "image": { "full": "220000.png" }
+    }
+  }
+}

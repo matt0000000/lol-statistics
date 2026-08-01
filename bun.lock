@@ -42,6 +42,13 @@
     "packages/domain": {
       "name": "@lol/domain",
     },
+    "packages/item-catalog": {
+      "name": "@lol/item-catalog",
+      "dependencies": {
+        "@lol/domain": "workspace:*",
+        "zod": "^4.4.3",
+      },
+    },
   },
   "packages": {
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
@@ -165,6 +172,8 @@
     "@lol/database": ["@lol/database@workspace:packages/database"],
 
     "@lol/domain": ["@lol/domain@workspace:packages/domain"],
+
+    "@lol/item-catalog": ["@lol/item-catalog@workspace:packages/item-catalog"],
 
     "@lol/web": ["@lol/web@workspace:apps/web"],
 
