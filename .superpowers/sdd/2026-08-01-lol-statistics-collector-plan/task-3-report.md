@@ -64,4 +64,4 @@ Fix verification:
 - `bun run db:generate` — no schema changes.
 - `git diff --check` and base-range `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` — clean.
 
-Fix Round 2 commit: `ae57306e4bbe444777d6caa6b93949b407df3c40` plus this report update.
+Fix Round 2 implementation base: `ae57306e4bbe444777d6caa6b93949b407df3c40`; final report/fix commit: `0315f80836ff396575c438a215d8c96ba0205861`.
