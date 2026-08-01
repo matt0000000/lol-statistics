@@ -130,6 +130,7 @@ export async function createMigratedTestDatabase(
     };
     const database = {
       db: dependencies.drizzle(testState.client),
+      url: isolatedUrl.toString(),
       close: () => {
         if (closePromise) return closePromise;
         closePromise = closeDatabase();

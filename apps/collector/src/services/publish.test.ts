@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { publishAtomically, verifyPublicationSnapshot, type PublishSnapshot } from "./publish";
 
 const base = (overrides: Partial<PublishSnapshot> = {}): PublishSnapshot => ({
@@ -20,12 +20,15 @@ describe("publication verification", () => {
   });
 
   it("activates only after verification in a serializable transaction", async () => {
-    const repository = { lockAndLoad: vi.fn(), activateVerified: vi.fn() };
-    await expect(publishAtomically({ publicationId: "pub", runId: "run", database: {}, repository: repository as any })).rejects.toThrow("database transaction is required");
-    expect(repository.activateVerified).not.toHaveBeenCalled();
+    await expect(publishAtomically({ publicationId: "pub", runId: "run", database: {} as any })).rejects.toThrow("created by createDatabase");
   });
 
   it("rejects caller-supplied snapshot state at the production boundary", async () => {
     await expect(publishAtomically({ publicationId: "pub", runId: "run", database: {} as any, repository: {} as any, observations: [] } as never)).rejects.toThrow("canonical publication state");
+  });
+
+  it("rejects an empty canonical catalog", async () => {
+    const result = await verifyPublicationSnapshot(base({ itemCatalog: new Map() }));
+    expect(result.failures).toContainEqual({ code: "CATALOG_MISSING", count: 1 });
   });
 });

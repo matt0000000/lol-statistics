@@ -1,4 +1,6 @@
 import { rebuildAggregates, type AggregateObservation } from "./rebuild-aggregates";
+import { assertDatabase, aggregatePublications, baselineAggregates, bootsAggregates, collectionRuns, combinationAggregates, itemAggregates, items, matches, participantBoots, participantCoreItems, participantObservations, patches, type Database } from "@lol/database";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 export type InvariantFailure = { code: string; count: number };
 export type VerificationReport = { valid: boolean; failures: InvariantFailure[] };
@@ -26,13 +28,7 @@ export type PublishSnapshot = {
 export type CanonicalPublishInput = {
   publicationId: string;
   runId: string;
-  database: { transaction?: (fn: (tx: any) => Promise<unknown>, options?: { isolationLevel: "serializable" }) => Promise<unknown> };
-  repository: CanonicalPublishRepository;
-};
-
-export type CanonicalPublishRepository = {
-  lockAndLoad: (tx: any, publicationId: string, runId: string) => Promise<PublishSnapshot>;
-  activateVerified: (tx: any, publicationId: string, runId: string) => Promise<unknown>;
+  database: Database;
 };
 
 function countFailure(map: Map<string, number>, code: string, count = 1) { if (count > 0) map.set(code, (map.get(code) ?? 0) + count); }
@@ -58,7 +54,7 @@ export async function verifyPublicationSnapshot(input: PublishSnapshot): Promise
   if (!input.publication || input.publication.id !== input.publicationId || input.publication.patchId !== input.patchId || input.publication.runId !== input.runId || input.publication.isActive) countFailure(failures, "PUBLICATION_NOT_ELIGIBLE");
   if (!input.patch || input.patch.id !== input.patchId || !input.patch.isActive) countFailure(failures, "PATCH_NOT_CURRENT");
   if (!input.run || input.run.id !== input.runId || input.run.status !== "RUNNING" || (input.run.stage !== undefined && input.run.stage !== "publish") || (input.run.publicationId && input.run.publicationId !== input.publicationId)) countFailure(failures, "RUN_NOT_ELIGIBLE");
-  if (!catalog) countFailure(failures, "CATALOG_MISSING");
+  if (!catalog || catalog.size === 0) countFailure(failures, "CATALOG_MISSING");
 
   const baselineByGroup = new Map<string, any>();
   const duplicateAgg = new Set<string>();
@@ -148,24 +144,65 @@ export async function verifyPublicationSnapshot(input: PublishSnapshot): Promise
 /** Loads and verifies canonical rows inside a caller-owned transaction. */
 export async function verifyPublication(input: CanonicalPublishInput): Promise<VerificationReport> {
   rejectSnapshotFields(input);
-  if (!input.database?.transaction) throw new Error("database transaction is required");
-  return input.database.transaction(async (tx) => verifyPublicationInTransaction(input, tx), { isolationLevel: "serializable" }) as Promise<VerificationReport>;
+  assertDatabase(input.database);
+  return input.database.db.transaction(async (tx: any) => verifyPublicationInTransaction(input, tx), { isolationLevel: "serializable" }) as Promise<VerificationReport>;
 }
 
 async function verifyPublicationInTransaction(input: CanonicalPublishInput, tx: any): Promise<VerificationReport> {
-  const snapshot = await input.repository.lockAndLoad(tx, input.publicationId, input.runId);
+  const snapshot = await lockAndLoadCanonical(tx, input.publicationId, input.runId);
   return verifyPublicationSnapshot(snapshot);
 }
 
 export async function publishAtomically(input: CanonicalPublishInput): Promise<void> {
   rejectSnapshotFields(input);
-  if (!input.database?.transaction) throw new Error("database transaction is required");
-  await input.database.transaction(async (tx) => {
+  assertDatabase(input.database);
+  await input.database.db.transaction(async (tx: any) => {
     const report = await verifyPublicationInTransaction(input, tx);
     if (!report.valid) throw new PublicationInvariantError(report.failures);
-    const changed = await input.repository.activateVerified(tx, input.publicationId, input.runId);
+    const changed = await activateCanonical(tx, input.publicationId, input.runId);
     if (changed === false) throw new Error("publication activation changed no rows");
   }, { isolationLevel: "serializable" });
+}
+
+async function lockAndLoadCanonical(tx: any, publicationId: string, runId: string): Promise<PublishSnapshot> {
+  const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+  const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
+  const patchId = publication?.patchId;
+  const patch = patchId ? (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0] : undefined;
+  await tx.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+  const [baseline, itemRows, combinations, boots] = await Promise.all([
+    tx.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, publicationId)).for("update"),
+    tx.select().from(itemAggregates).where(eq(itemAggregates.publicationId, publicationId)).for("update"),
+    tx.select().from(combinationAggregates).where(eq(combinationAggregates.publicationId, publicationId)).for("update"),
+    tx.select().from(bootsAggregates).where(eq(bootsAggregates.publicationId, publicationId)).for("update")
+  ]);
+  const catalogRows = patchId ? await tx.select().from(items).where(eq(items.patchId, patchId)).for("update") : [];
+  const itemCatalog = new Map<number, any>(catalogRows.map((row: any) => [row.itemId, row]));
+  const observations: AggregateObservation[] = [];
+  if (patchId) {
+    const joined = await tx.select().from(participantObservations).innerJoin(matches, eq(matches.matchId, participantObservations.matchId)).where(eq(participantObservations.patchId, patchId)).orderBy(asc(participantObservations.championId), asc(participantObservations.role), asc(participantObservations.matchId), asc(participantObservations.participantId)).for("update");
+    for (const entry of joined) {
+      const observation = entry.participant_observations;
+      const core = await tx.select({ itemId: participantCoreItems.itemId, quantity: participantCoreItems.quantity, category: items.category, normalizedBaseId: items.normalizedBaseId }).from(participantCoreItems).innerJoin(items, and(eq(items.patchId, participantCoreItems.patchId), eq(items.itemId, participantCoreItems.itemId))).where(and(eq(participantCoreItems.matchId, observation.matchId), eq(participantCoreItems.participantId, observation.participantId), eq(participantCoreItems.patchId, patchId))).for("update");
+      const bootsRow = (await tx.select({ itemId: participantBoots.itemId, category: items.category, normalizedBaseId: items.normalizedBaseId }).from(participantBoots).innerJoin(items, and(eq(items.patchId, participantBoots.patchId), eq(items.itemId, participantBoots.itemId))).where(and(eq(participantBoots.matchId, observation.matchId), eq(participantBoots.participantId, observation.participantId))).limit(1).for("update"))[0];
+      observations.push({ championId: observation.championId, role: observation.role, matchId: observation.matchId, participantId: observation.participantId, win: observation.win, items: core, boots: bootsRow, patchId, queueId: entry.matches.queueId, platformId: entry.matches.platformId, validationState: entry.matches.validationState });
+    }
+  }
+  return { publicationId, runId, patchId: publication?.patchId, publication, run, patch, baseline, items: itemRows, combinations, boots, observations, itemCatalog };
+}
+
+async function activateCanonical(tx: any, publicationId: string, runId: string): Promise<boolean> {
+  const target = (await tx.select().from(aggregatePublications).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.runId, runId), eq(aggregatePublications.isActive, false))).for("update").limit(1))[0];
+  if (!target) return false;
+  await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+  await tx.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true));
+  const changed = await tx.update(aggregatePublications).set({ isActive: true }).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.isActive, false))).returning({ id: aggregatePublications.id });
+  if (changed.length !== 1) throw new Error("publication activation changed no rows");
+  const updatedRun = await tx.update(collectionRuns).set({ status: "COMPLETED", publicationId, finishedAt: new Date(), updatedAt: new Date() }).where(and(eq(collectionRuns.id, runId), sql`(${collectionRuns.publicationId} IS NULL OR ${collectionRuns.publicationId} = ${publicationId})`)).returning({ id: collectionRuns.id });
+  if (updatedRun.length !== 1) throw new Error("run publication changed no rows");
+  const updatedPatch = await tx.update(patches).set({ publishedAt: new Date() }).where(eq(patches.id, target.patchId)).returning({ id: patches.id });
+  if (updatedPatch.length !== 1) throw new Error("patch publication changed no rows");
+  return true;
 }
 
 function rejectSnapshotFields(input: object): void {
