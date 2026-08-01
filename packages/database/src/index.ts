@@ -5,3 +5,4 @@ export * from "./repositories/collection-runs";
 export * from "./repositories/ladder";
 export * from "./repositories/matches";
 export * from "./repositories/observations";
+export * from "./repositories/aggregates";

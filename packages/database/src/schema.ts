@@ -264,6 +264,23 @@ export const itemAggregates = pgTable(
   (table) => [primaryKey({ columns: [table.publicationId, table.championId, table.role, table.itemId] }), check("item_aggregates_counts_nonnegative", sql`${table.wins} >= 0 AND ${table.losses} >= 0 AND ${table.sample} >= 0`)]
 );
 
+export const baselineAggregates = pgTable(
+  "baseline_aggregates",
+  {
+    publicationId: uuid("publication_id").notNull().references(() => aggregatePublications.id),
+    championId: integer("champion_id").notNull(),
+    role: role("role").notNull(),
+    wins: integer("wins").notNull().default(0),
+    losses: integer("losses").notNull().default(0),
+    sample: integer("sample").notNull().default(0)
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.championId, table.role] }),
+    check("baseline_aggregates_counts_nonnegative", sql`${table.wins} >= 0 AND ${table.losses} >= 0 AND ${table.sample} >= 0`),
+    check("baseline_aggregates_counts_equal", sql`${table.wins} + ${table.losses} = ${table.sample}`)
+  ]
+);
+
 export const combinationAggregates = pgTable(
   "combination_aggregates",
   {
@@ -311,6 +328,7 @@ export const schemaContract = {
   participantBoots: "pk(match_id, participant_id)",
   aggregatePublications: "pk(id), unique active partial index",
   itemAggregates: "pk(publication_id, champion_id, role, item_id)",
+  baselineAggregates: "pk(publication_id, champion_id, role)",
   combinationAggregates: "pk(publication_id, champion_id, role, size, combination_key)",
   bootsAggregates: "pk(publication_id, champion_id, role, item_id)"
 } as const;
