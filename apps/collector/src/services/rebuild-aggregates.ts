@@ -65,6 +65,17 @@ export type RebuildResult = {
   boots?: Map<number, Counter>;
 };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validateAggregateOwner(input: RebuildInput): void {
+  if (!UUID_PATTERN.test(input.publicationId) || !UUID_PATTERN.test(input.runId) || !Number.isSafeInteger(input.patchId) || input.patchId <= 0) {
+    throw new Error("invalid aggregate owner");
+  }
+  if (input.sink && (typeof input.sink.preparePublication !== "function" || typeof input.sink.flushGroup !== "function")) {
+    throw new Error("invalid aggregate sink");
+  }
+}
+
 function emptyGroup(championId: number, role: string): AggregateGroup {
   return { championId, role, baseline: { wins: 0, losses: 0, sample: 0 }, items: new Map(), pairs: new Map(), trios: new Map(), boots: new Map() };
 }
@@ -138,6 +149,7 @@ function compareObservation(a: AggregateObservation, b: AggregateObservation): n
 }
 
 export async function rebuildAggregates(input: RebuildInput): Promise<RebuildResult> {
+  validateAggregateOwner(input);
   const groups = new Map<string, AggregateGroup>();
   const streamingSink = !!input.sink;
   const collectResult = input.collectResult ?? (!input.sink || !streamingSink && !!input.sink?.replacePublication);

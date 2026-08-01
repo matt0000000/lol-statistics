@@ -140,3 +140,31 @@ EXIT_STATUS=1
 ```
 
 Fix-round-3 product commit: `3d03ffd24fcca43cb4903be39146126172d12dd7` (`fix: bind aggregate rebuilds to owned publications`).
+
+## Fix round 4 (lifecycle transactions and integration matrix)
+
+- `AggregatesRepository.preparePublication(owner)` is now a single-use session operation. A second call always throws `aggregate sink already prepared` before touching rows, including when the owner is identical. A fresh repository can explicitly retry an inactive target after a failed process/session.
+- `flushGroup(group)` now opens one transaction when no transaction is supplied. The inactive/owner `FOR UPDATE` check and every baseline/item/pair/trio/boots insert execute under that same lock/transaction. Replacement/bulk writes continue to reuse one caller transaction, so an activation or ownership race either serializes before inserts or rejects without partial rows.
+- `rebuildAggregates` validates UUID publication/run IDs, positive safe patch IDs, and the complete prepare/flush sink lifecycle before invoking `preparePublication`; invalid `as any` inputs fail before any sink call.
+- PostgreSQL integration coverage is now 23 isolated cases across `aggregates.integration.test.ts` (8) and `publish.integration.test.ts` (15). Cases cover pre-prepare rejection, owner/active checks, single-use prepare preservation, stale-table clearing, exact replacement/new-session retry, canonical source filtering/order, valid nonempty activation, prior-active switching/rollback, empty catalog, missing baseline, invalid source, wrong run/patch IDs, wrong stage/status, and already-active targets. Every case creates a fresh migrated database in setup; configured-unavailable PostgreSQL fails each setup visibly.
+
+Fix-round-4 verification:
+
+- `bunx vitest run apps/collector/src/services/rebuild-aggregates.test.ts apps/collector/src/services/publish.test.ts` — PASS (14 tests).
+- `bunx vitest run` — PASS (169 tests), 6 PostgreSQL-gated suites skipped (53 gated tests).
+- `bun run typecheck` — PASS for all workspaces.
+- `bunx drizzle-kit check` — PASS (`Everything's fine`).
+- `bun run db:generate` — PASS; no schema changes.
+- `git diff --check` — PASS.
+
+Actual new PostgreSQL integration attempt (server unavailable):
+
+```text
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts
+Error: connect ECONNREFUSED 127.0.0.1:5432
+Test Files 2 failed (2)
+Tests 23 failed (23)
+EXIT_STATUS=1
+```
+
+The integration matrix is intentionally retained as setup-failing when `TEST_DATABASE_URL` points at an unavailable server; no PostgreSQL success is claimed locally.

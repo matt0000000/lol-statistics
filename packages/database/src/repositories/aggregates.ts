@@ -12,9 +12,11 @@ const tables = [baselineAggregates, itemAggregates, combinationAggregates, boots
 export class AggregatesRepository implements AggregateSink {
   constructor(private readonly db: any) {}
   private preparedOwner?: { publicationId: string; runId: string; patchId: number };
+  private prepareAttempted = false;
 
   async preparePublication(owner: { publicationId: string; runId: string; patchId: number }): Promise<void> {
-    if (this.preparedOwner && JSON.stringify(this.preparedOwner) !== JSON.stringify(owner)) throw new Error("aggregate sink owner already bound");
+    if (this.prepareAttempted) throw new Error("aggregate sink already prepared");
+    this.prepareAttempted = true;
     await this.db.transaction(async (tx: Tx) => {
       const row = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, owner.publicationId)).for("update").limit(1))[0];
       if (!row || row.isActive || row.runId !== owner.runId || row.patchId !== owner.patchId) throw new Error("aggregate rebuild requires an inactive owned publication");
@@ -23,7 +25,11 @@ export class AggregatesRepository implements AggregateSink {
     this.preparedOwner = { ...owner };
   }
 
-  async flushGroup(group: AggregateGroup, tx: Tx = this.db): Promise<void> {
+  async flushGroup(group: AggregateGroup, tx?: Tx): Promise<void> {
+    if (!tx) {
+      await this.db.transaction(async (transaction: Tx) => this.flushGroup(group, transaction));
+      return;
+    }
     const owner = this.preparedOwner;
     if (!owner) throw new Error("aggregate sink must be prepared");
     const row = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, owner.publicationId)).for("update").limit(1))[0];

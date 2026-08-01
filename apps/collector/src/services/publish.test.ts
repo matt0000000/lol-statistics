@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { publishAtomically, verifyPublicationSnapshot, type PublishSnapshot } from "./publish";
 
 const base = (overrides: Partial<PublishSnapshot> = {}): PublishSnapshot => ({
-  publicationId: "pub", runId: "run", patchId: 1,
-  publication: { id: "pub", patchId: 1, runId: "run", isActive: false },
+  publicationId: "00000000-0000-4000-8000-000000000001", runId: "00000000-0000-4000-8000-000000000002", patchId: 1,
+  publication: { id: "00000000-0000-4000-8000-000000000001", patchId: 1, runId: "00000000-0000-4000-8000-000000000002", isActive: false },
   patch: { id: 1, isActive: true },
-  run: { id: "run", status: "RUNNING", stage: "publish" },
+  run: { id: "00000000-0000-4000-8000-000000000002", status: "RUNNING", stage: "publish" },
   itemCatalog: new Map([[3031, { itemId: 3031, category: "CORE", normalizedBaseId: 3031 }]]),
-  baseline: [{ publicationId: "pub", championId: 1, role: "TOP", wins: 1, losses: 1, sample: 2 }],
+  baseline: [{ publicationId: "00000000-0000-4000-8000-000000000001", championId: 1, role: "TOP", wins: 1, losses: 1, sample: 2 }],
   items: [], combinations: [], boots: [], observations: [],
   ...overrides
 });
