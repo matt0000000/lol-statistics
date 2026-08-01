@@ -23,6 +23,7 @@ export class DataDragonClient {
     aliases: Record<number, number>;
   }> {
     const realm = parseRealm(await this.getJson(TR_REALM_URL));
+    if (realm.l !== "tr_TR") throw new Error("Only the canonical TR Data Dragon locale is allowed");
     // Validate that the realm version has the major/minor shape used by the
     // domain before constructing versioned catalog URLs.
     toPatchKey(realm.dd);

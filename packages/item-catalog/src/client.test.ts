@@ -115,6 +115,17 @@ describe("DataDragonClient", () => {
     expect(String(fetcher.mock.calls[1]?.[0])).toBe("https://ddragon.leagueoflegends.com/cdn/16.15.1/data/tr_TR/champion.json");
   });
 
+  it.each([".", "..", "tr/TR", "tr\\TR", "tr%2FTR", "tr_TR/../secret", "tr_TR\u0000"]) (
+    "rejects an unsafe realm locale segment (%s)",
+    async (locale) => {
+      const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+        v: "16.15.1", dd: "16.15.1", l: locale, cdn: "https://ddragon.leagueoflegends.com/cdn"
+      })));
+      await expect(new DataDragonClient(fetcher).fetchTrCatalog()).rejects.toThrow();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it.each(["1e3", "0x10", "+1", " 1"]) (
     "rejects a non-canonical item record key (%s)",
     async (key) => {

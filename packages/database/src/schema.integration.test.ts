@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { createMigratedTestDatabase } from "./test-utils";
 import { matches, patches, participantObservations } from "./schema";
@@ -12,20 +12,8 @@ describe.skipIf(!url)("canonical schema", () => {
     database = await createMigratedTestDatabase(url!);
   });
 
-  afterAll(() => database?.close());
-
-  const cleanup = async () => {
-    const rows = await database.db.select({ id: patches.id, version: patches.version }).from(patches);
-    const testRows = rows.filter((row) => /^(90|97|98)\./.test(row.version));
-    for (const row of testRows) {
-      await database.db.execute(sql`DELETE FROM participant_observations WHERE patch_id = ${row.id}`);
-      await database.db.execute(sql`DELETE FROM matches WHERE patch_id = ${row.id}`);
-      await database.db.delete(patches).where(eq(patches.id, row.id));
-    }
-  };
-
-  afterEach(async () => {
-    if (database) await cleanup();
+  afterAll(async () => {
+    if (database) await database.close();
   });
 
   it("stores a patch once by exact Data Dragon version", async () => {
