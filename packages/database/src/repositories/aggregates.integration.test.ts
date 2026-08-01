@@ -26,13 +26,21 @@ describe.skipIf(!url)("aggregate repository PostgreSQL invariants", () => {
   it("rejects flush before prepare and persists no rows", async () => {
     const repository = new AggregatesRepository(database.db);
     await expect(repository.flushGroup(group())).rejects.toThrow("must be prepared");
-    expect(await repository.rows(publicationId)).toEqual([]);
+    expect(await new AggregatesRepository(database.db).rows(publicationId)).toEqual([]);
   });
 
   it("rejects wrong run and patch owners without changing rows", async () => {
+    const wrongRunSession = new AggregatesRepository(database.db);
+    await expect(wrongRunSession.preparePublication({ publicationId, runId: "00000000-0000-4000-8000-000000000099", patchId })).rejects.toThrow("inactive owned");
+    const wrongPatchSession = new AggregatesRepository(database.db);
+    await expect(wrongPatchSession.preparePublication({ publicationId, runId, patchId: patchId + 999 })).rejects.toThrow("inactive owned");
+    expect(await new AggregatesRepository(database.db).rows(publicationId)).toEqual([]);
+  });
+
+  it("keeps prepare single-use sticky after a failed ownership attempt", async () => {
     const repository = new AggregatesRepository(database.db);
     await expect(repository.preparePublication({ publicationId, runId: "00000000-0000-4000-8000-000000000099", patchId })).rejects.toThrow("inactive owned");
-    await expect(repository.preparePublication({ publicationId, runId, patchId: patchId + 999 })).rejects.toThrow("inactive owned");
+    await expect(repository.preparePublication({ publicationId, runId, patchId })).rejects.toThrow("already prepared");
     expect(await repository.rows(publicationId)).toEqual([]);
   });
 

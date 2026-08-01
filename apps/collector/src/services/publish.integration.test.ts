@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDatabase, createMigratedTestDatabase, aggregatePublications, baselineAggregates, collectionRuns, itemAggregates, items, matches, participantCoreItems, participantObservations, patches } from "@lol/database";
+import { createDatabase, createMigratedTestDatabase, aggregatePublications, baselineAggregates, collectionRuns, itemAggregates, items, matches, participantCoreItems, participantObservations, patches, AggregatesRepository } from "@lol/database";
 import { eq } from "drizzle-orm";
-import { publishAtomically } from "./publish";
+import { __setPublishTestHooks, publishAtomically } from "./publish";
 
 const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
@@ -23,6 +23,14 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     productionDatabase = createDatabase(database.url);
   });
   afterEach(async () => { if (productionDatabase) await productionDatabase.close(); if (database) await database.close(); });
+
+  afterEach(() => __setPublishTestHooks());
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve };
+  }
 
   async function seedAcceptedObservation() {
     const now = new Date();
@@ -122,5 +130,57 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     await database.db.update(aggregatePublications).set({ isActive: true }).where(eq(aggregatePublications.id, publicationId));
     await expect(publishAtomically({ publicationId, runId, database: productionDatabase })).rejects.toBeDefined();
     expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)))[0]?.isActive).toBe(true);
+  });
+
+  it("serializes a flush already waiting on the target lock against activation", async () => {
+    const activationEntered = deferred();
+    const releaseActivation = deferred();
+    __setPublishTestHooks({
+      beforeActivation: async () => {
+        activationEntered.resolve();
+        await releaseActivation.promise;
+      }
+    });
+    const repository = new AggregatesRepository(database.db);
+    await repository.preparePublication({ publicationId, runId, patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId });
+    const activation = publishAtomically({ publicationId, runId, database: productionDatabase });
+    await activationEntered.promise;
+    const flush = repository.flushGroup({ championId: 1, role: "TOP", baseline: { wins: 1, losses: 0, sample: 1 }, items: new Map(), pairs: new Map(), trios: new Map(), boots: new Map() });
+    releaseActivation.resolve();
+    const outcomes = await Promise.allSettled([activation, flush]);
+    expect(outcomes.some((result) => result.status === "fulfilled")).toBe(true);
+    const target = (await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)))[0]!;
+    const rows = await repository.rows(publicationId);
+    expect(target.isActive).toBe(true);
+    expect(rows.length === 0 || rows.length === 1).toBe(true);
+  });
+
+  it("allows concurrent publication attempts to serialize to one active target", async () => {
+    const patchRow = (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!;
+    const [otherRun] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id });
+    const [otherPublication] = await database.db.insert(aggregatePublications).values({ patchId: patchRow.patchId, runId: otherRun!.id, coverageStartedAt: new Date() }).returning({ id: aggregatePublications.id });
+    const firstEntered = deferred();
+    const releaseFirst = deferred();
+    __setPublishTestHooks({ beforeActivation: async () => { firstEntered.resolve(); await releaseFirst.promise; } });
+    const first = publishAtomically({ publicationId, runId, database: productionDatabase });
+    await firstEntered.promise;
+    const second = publishAtomically({ publicationId: otherPublication!.id, runId: otherRun!.id, database: productionDatabase });
+    releaseFirst.resolve();
+    await Promise.allSettled([first, second]);
+    const publications = await database.db.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications);
+    expect(publications.filter((row) => row.isActive)).toHaveLength(1);
+  });
+
+  it("rolls back a failure injected after deactivation mutates activation state", async () => {
+    const [priorRun] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id });
+    const [priorPublication] = await database.db.insert(aggregatePublications).values({ patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId, runId: priorRun!.id, coverageStartedAt: new Date(), isActive: true }).returning({ id: aggregatePublications.id });
+    const afterDeactivation = deferred();
+    __setPublishTestHooks({ afterDeactivation: () => { afterDeactivation.resolve(); throw new Error("injected activation failure"); } });
+    await expect(publishAtomically({ publicationId, runId, database: productionDatabase })).rejects.toThrow("injected activation failure");
+    await afterDeactivation.promise;
+    const rows = await database.db.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications);
+    expect(rows.find((row) => row.id === priorPublication!.id)?.isActive).toBe(true);
+    expect(rows.find((row) => row.id === publicationId)?.isActive).toBe(false);
+    expect((await database.db.select({ status: collectionRuns.status }).from(collectionRuns).where(eq(collectionRuns.id, runId)))[0]?.status).toBe("RUNNING");
   });
 });

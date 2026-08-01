@@ -168,3 +168,21 @@ EXIT_STATUS=1
 ```
 
 The integration matrix is intentionally retained as setup-failing when `TEST_DATABASE_URL` points at an unavailable server; no PostgreSQL success is claimed locally.
+
+## Fix round 5 (final review fixes)
+
+- Corrected the PostgreSQL ownership matrix so independent failed `preparePublication` checks use fresh repository sessions. A dedicated case now asserts the intentional sticky single-use behavior: after any failed prepare attempt, the same session rejects every later prepare as `aggregate sink already prepared`, while a fresh session may retry an inactive target.
+- Added deterministic PostgreSQL-gated concurrency coverage. An internal collector-module test hook pauses a verified activation while the target row lock is held; a real `AggregatesRepository.flushGroup` transaction overlaps and then serializes/rejects after activation. A second test starts two publication attempts concurrently and asserts the unique active-publication invariant after serialization. No sleeps are used.
+- Added rollback coverage with a test-only internal hook that throws immediately after the transaction deactivates the prior publication. The transaction rollback assertions prove the prior active publication remains active, the target remains inactive, and the run remains `RUNNING`.
+- Removed the unreachable `replacePublication` sink branch and API. Rebuilds now document and enforce owner-bound `preparePublication` plus streaming `flushGroup` semantics only.
+- Exported `AggregatesRepository` for integration-test construction; no activation internals are exported. The failure-injection hook is an internal collector module helper and is not part of a public package export.
+
+Fix-round-5 verification:
+
+- `bunx vitest run apps/collector/src/services/rebuild-aggregates.test.ts apps/collector/src/services/publish.test.ts` — PASS (14 tests).
+- `bunx vitest run` — PASS (169 tests), 6 PostgreSQL-gated suites skipped (57 gated tests).
+- `bun run typecheck` — PASS for all workspaces.
+- `bunx drizzle-kit check` — PASS (`Everything's fine`).
+- `bun run db:generate` — PASS (`No schema changes, nothing to migrate`).
+- `git diff --check` — PASS.
+- `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts` — attempted; all 27 configured PostgreSQL cases failed setup with `ECONNREFUSED 127.0.0.1:5432` because no local server is available. No green PostgreSQL execution is claimed.

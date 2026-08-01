@@ -34,7 +34,6 @@ export type AggregateOwner = { publicationId: string; runId: string; patchId: nu
 export type AggregateSink = {
   preparePublication: (owner: AggregateOwner) => Promise<unknown> | unknown;
   flushGroup: (group: AggregateGroup) => Promise<unknown> | unknown;
-  replacePublication?: (groups: Iterable<AggregateGroup>) => Promise<unknown> | unknown;
 };
 
 export type ObservationSource =
@@ -151,8 +150,8 @@ function compareObservation(a: AggregateObservation, b: AggregateObservation): n
 export async function rebuildAggregates(input: RebuildInput): Promise<RebuildResult> {
   validateAggregateOwner(input);
   const groups = new Map<string, AggregateGroup>();
-  const streamingSink = !!input.sink;
-  const collectResult = input.collectResult ?? (!input.sink || !streamingSink && !!input.sink?.replacePublication);
+  // Sinks are owner-bound streaming writers; replacement is performed by preparePublication + flushGroup.
+  const collectResult = input.collectResult ?? !input.sink;
   const pageSize = input.pageSize ?? 500;
   let currentKey: string | undefined;
   let current: AggregateGroup | undefined;
@@ -164,7 +163,7 @@ export async function rebuildAggregates(input: RebuildInput): Promise<RebuildRes
     previous = row;
     const key = keyOf(row);
     if (currentKey !== undefined && key !== currentKey) {
-      if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(current);
+      if (current && input.sink?.flushGroup) await input.sink.flushGroup(current);
       flushed.add(currentKey);
       current = undefined;
     }
@@ -174,8 +173,7 @@ export async function rebuildAggregates(input: RebuildInput): Promise<RebuildRes
     if (collectResult) groups.set(key, current);
     consume(current, row, input.catalog);
   }
-  if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(current);
-  if (input.sink?.replacePublication && !streamingSink) await input.sink.replacePublication(groups.values());
+  if (current && input.sink?.flushGroup) await input.sink.flushGroup(current);
   const first = groups.values().next().value as AggregateGroup | undefined;
   return { publicationId: input.publicationId, groups, baseline: first?.baseline, items: first?.items, pairs: first?.pairs, trios: first?.trios, boots: first?.boots };
 }

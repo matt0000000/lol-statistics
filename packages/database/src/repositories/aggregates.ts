@@ -3,13 +3,12 @@ import { aggregatePublications, baselineAggregates, bootsAggregates, collectionR
 type Counter = { wins: number; losses: number; sample: number };
 type AggregateGroup = { championId: number; role: string; baseline: Counter; items: Map<number, Counter>; pairs: Map<string, Counter>; trios: Map<string, Counter>; boots: Map<number, Counter> };
 export type CanonicalAggregateObservation = { championId: number; role: string; matchId: string; participantId: number; win: boolean; items: { itemId: number; quantity: number; category?: string; normalizedBaseId?: number }[]; boots?: number | { itemId: number; category?: string; normalizedBaseId?: number }; patchId?: number; queueId?: number; platformId?: string; validationState?: string };
-type AggregateSink = { preparePublication: (owner: { publicationId: string; runId: string; patchId: number }) => Promise<unknown> | unknown; flushGroup: (group: AggregateGroup) => Promise<unknown> | unknown; replacePublication?: (groups: Iterable<AggregateGroup>) => Promise<unknown> | unknown };
 type AggregateObservation = CanonicalAggregateObservation;
 
 type Tx = any;
 const tables = [baselineAggregates, itemAggregates, combinationAggregates, bootsAggregates] as const;
 
-export class AggregatesRepository implements AggregateSink {
+export class AggregatesRepository {
   constructor(private readonly db: any) {}
   private preparedOwner?: { publicationId: string; runId: string; patchId: number };
   private prepareAttempted = false;
@@ -40,17 +39,6 @@ export class AggregatesRepository implements AggregateSink {
     for (const [combinationKey, count] of group.pairs) await tx.insert(combinationAggregates).values({ ...base, size: 2, combinationKey, ...count }).onConflictDoUpdate({ target: [combinationAggregates.publicationId, combinationAggregates.championId, combinationAggregates.role, combinationAggregates.size, combinationAggregates.combinationKey], set: count });
     for (const [combinationKey, count] of group.trios) await tx.insert(combinationAggregates).values({ ...base, size: 3, combinationKey, ...count }).onConflictDoUpdate({ target: [combinationAggregates.publicationId, combinationAggregates.championId, combinationAggregates.role, combinationAggregates.size, combinationAggregates.combinationKey], set: count });
     for (const [itemId, count] of group.boots) await tx.insert(bootsAggregates).values({ ...base, itemId, ...count }).onConflictDoUpdate({ target: [bootsAggregates.publicationId, bootsAggregates.championId, bootsAggregates.role, bootsAggregates.itemId], set: count });
-  }
-
-  async replacePublication(groups: Iterable<AggregateGroup>): Promise<void> {
-    const owner = this.preparedOwner;
-    if (!owner) throw new Error("aggregate sink must be prepared");
-    await this.db.transaction(async (tx: Tx) => {
-      const row = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, owner.publicationId)).for("update").limit(1))[0];
-      if (!row || row.isActive || row.runId !== owner.runId || row.patchId !== owner.patchId) throw new Error("aggregate sink owner is no longer valid");
-      for (const table of tables) await tx.delete(table).where(eq(table.publicationId, owner.publicationId));
-      for (const group of groups) await this.flushGroup(group, tx);
-    });
   }
 
   async rows(publicationId: string): Promise<Record<string, unknown>[]> {
