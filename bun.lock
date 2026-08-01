@@ -22,6 +22,7 @@
       "dependencies": {
         "@lol/database": "workspace:*",
         "@lol/item-catalog": "workspace:*",
+        "@lol/riot-client": "workspace:*",
       },
     },
     "apps/web": {

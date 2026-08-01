@@ -113,9 +113,25 @@ export const ladderSnapshots = pgTable(
     queue: integer("queue").notNull().default(420),
     tier: tier("tier").notNull(),
     division: varchar("division", { length: 3 }).notNull(),
+    nextMatchOffset: integer("next_match_offset").notNull().default(0),
     capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.runId, table.puuid] }), index("ladder_snapshots_run_tier_idx").on(table.runId, table.tier)]
+  (table) => [
+    primaryKey({ columns: [table.runId, table.puuid] }),
+    index("ladder_snapshots_run_tier_idx").on(table.runId, table.tier),
+    check("ladder_snapshots_next_match_offset_nonnegative", sql`${table.nextMatchOffset} >= 0`)
+  ]
+);
+
+/** Match IDs discovered for a run, before their full payload is fetched. */
+export const discoveredMatches = pgTable(
+  "discovered_matches",
+  {
+    runId: uuid("run_id").notNull().references(() => collectionRuns.id),
+    matchId: text("match_id").notNull(),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.runId, table.matchId] }), index("discovered_matches_run_idx").on(table.runId)]
 );
 
 export const matches = pgTable(
@@ -268,7 +284,8 @@ export const schemaContract = {
   champions: "pk(patch_id, champion_id), unique(patch_id, slug)",
   items: "pk(patch_id, item_id)",
   collectionRuns: "pk(id), index(status, started_at)",
-  ladderSnapshots: "pk(run_id, puuid), index(run_id, tier)",
+  ladderSnapshots: "pk(run_id, puuid), index(run_id, tier), next_match_offset",
+  discoveredMatches: "pk(run_id, match_id), index(run_id)",
   matches: "pk(match_id), index(patch_id, validation_state)",
   participantObservations: "pk(match_id, participant_id), index(patch_id, champion_id, role)",
   participantCoreItems: "pk(match_id, participant_id, slot_index)",

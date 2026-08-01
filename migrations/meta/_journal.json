@@ -15,6 +15,13 @@
       "when": 1785606580624,
       "tag": "0001_gray_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785612540001,
+      "tag": "0002_next_jack_murdock",
+      "breakpoints": true
     }
   ]
 }
