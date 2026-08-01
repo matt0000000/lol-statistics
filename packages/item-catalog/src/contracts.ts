@@ -17,7 +17,7 @@ const safeNonNegativeIntegerSchema = z.number()
   .refine(Number.isSafeInteger, "must be a safe integer");
 
 const safeChampionKeySchema = z.union([
-  z.string().regex(/^[0-9]+$/).transform((value, context) => {
+  z.string().regex(/^(0|[1-9][0-9]*)$/).transform((value, context) => {
     const parsed = Number(value);
     if (!Number.isSafeInteger(parsed)) {
       context.addIssue({ code: "custom", message: "must be a safe integer" });
@@ -28,7 +28,7 @@ const safeChampionKeySchema = z.union([
   safeNonNegativeIntegerSchema
 ]);
 
-const canonicalItemKeySchema = z.string().regex(/^[0-9]+$/).transform((value, context) => {
+const canonicalItemKeySchema = z.string().regex(/^(0|[1-9][0-9]*)$/).transform((value, context) => {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) {
     context.addIssue({ code: "custom", message: "must be a safe integer" });

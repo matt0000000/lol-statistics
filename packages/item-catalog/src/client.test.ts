@@ -66,6 +66,7 @@ describe("DataDragonClient", () => {
     expect(loadChampionFixture({ data: { A: { id: "A", key: "1", name: "A", image: { full: "A.png" } } } }).data.A.key).toBe(1);
     expect(() => loadItemFixture({ data: { bad: { name: "missing fields" } } })).toThrow();
     expect(() => loadChampionFixture({ data: { A: { id: "A", key: "9007199254740993", name: "A", image: { full: "A.png" } } } })).toThrow();
+    expect(() => loadChampionFixture({ data: { A: { id: "A", key: "01", name: "A", image: { full: "A.png" } } } })).toThrow();
   });
 
   it("accepts the sanitized 16.15.1 fixtures", () => {
@@ -91,4 +92,37 @@ describe("DataDragonClient", () => {
       await expect(new DataDragonClient(fetcher).fetchTrCatalog()).rejects.toThrow();
     }
   );
+
+  it.each(["01", "001", "000"]) (
+    "rejects a leading-zero item record key (%s)",
+    async (key) => {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { [key]: {
+          name: "Invalid", description: "", gold: { base: 0, total: 0, sell: 0, purchasable: false },
+          into: [], from: [], tags: [], maps: { "11": true }, purchasable: false, image: { full: "invalid.png" }
+        } } })));
+
+      await expect(new DataDragonClient(fetcher).fetchTrCatalog()).rejects.toThrow();
+    }
+  );
+
+  it("rejects colliding and unsafe item record keys", async () => {
+    const item = {
+      name: "Invalid", description: "", gold: { base: 0, total: 0, sell: 0, purchasable: false },
+      into: [], from: [], tags: [], maps: { "11": true }, purchasable: false, image: { full: "invalid.png" }
+    };
+    const collidingFetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { "1": item, "01": item } })));
+    await expect(new DataDragonClient(collidingFetcher).fetchTrCatalog()).rejects.toThrow();
+
+    const unsafeFetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { "9007199254740993": item } })));
+    await expect(new DataDragonClient(unsafeFetcher).fetchTrCatalog()).rejects.toThrow();
+  });
 });
