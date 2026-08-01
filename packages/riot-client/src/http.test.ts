@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RiotHttpClient } from "./http";
+import { RiotHttpError } from "./errors";
 
 const request = { host: "tr1.api.riotgames.com", path: "/lol/test", schema: { parse: (value: unknown) => value } };
 
@@ -21,6 +22,16 @@ describe("RiotHttpClient", () => {
     const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep, random: () => 0 });
     await client.getJson(request);
     expect(sleep).toHaveBeenCalledWith(2_000);
+  });
+
+  it.each(["-1", "NaN", "Infinity", "1x", "1:2"]) ("falls back to deterministic backoff for malformed Retry-After %s", async (retryAfter) => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": retryAfter } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep, random: () => 0 });
+    await client.getJson(request);
+    expect(sleep).toHaveBeenCalledWith(250);
   });
 
   it.each([401, 403])("does not retry status %s", async (status) => {
@@ -206,5 +217,89 @@ describe("RiotHttpClient", () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     await new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep: vi.fn() }).getJson(request);
     expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: "error" });
+  });
+
+  it("does not treat spoofable object markers or codes as network failures", async () => {
+    const markers: unknown[] = [
+      { isNetworkError: true },
+      { code: "ECONNRESET" },
+      new RiotHttpError("programmer", null, false, "schema"),
+      new DOMException("programmer", "NetworkError"),
+    ];
+    for (const marker of markers) {
+      const fetcher = vi.fn().mockRejectedValue(marker);
+      const sleep = vi.fn();
+      const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep });
+      await expect(client.getJson(request)).rejects.toBe(marker);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    }
+  });
+
+  it("retries true TypeError network failures through the five-retry cap", async () => {
+    const fetcher = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep, random: () => 0 });
+    await expect(client.getJson(request)).rejects.toMatchObject({ category: "network", retryable: true });
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(sleep).toHaveBeenCalledTimes(5);
+  });
+
+  it("rejects literal, encoded, and double-encoded traversal or path-confusion attempts", async () => {
+    const fetcher = vi.fn();
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep: vi.fn() });
+    const paths = [
+      "/lol/../secret",
+      "/lol/%2e%2e/secret",
+      "/lol/%252e%252e/secret",
+      "/lol/%2fsecret",
+      "/lol/%5csecret",
+      "/lol\\secret",
+      "/lol/%ZZ/secret",
+      "//evil.example/secret",
+      "/lol/test?next=https://evil.example",
+      "/lol/test?next=user:pass@evil.example",
+    ];
+    for (const path of paths) {
+      await expect(client.getJson({ ...request, path })).rejects.toMatchObject({ category: "schema", retryable: false });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects literal, encoded, and double-encoded API keys in paths or queries", async () => {
+    const key = "RGAPI/secret+token";
+    const encoded = encodeURIComponent(key);
+    const doubleEncoded = encodeURIComponent(encoded);
+    const fetcher = vi.fn();
+    const client = new RiotHttpClient({ apiKey: key, fetcher, sleep: vi.fn() });
+    for (const path of [`/lol/${key}`, `/lol/${encoded}`, `/lol/${doubleEncoded}`, `/lol/test?key=${encoded}`, `/lol/test?key=${doubleEncoded}`]) {
+      await expect(client.getJson({ ...request, path })).rejects.toMatchObject({ category: "schema", retryable: false });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("uses the capped 20 percent jitter sequence", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("", { status: 500 }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep, random: () => 1 });
+    await expect(client.getJson(request)).rejects.toMatchObject({ status: 500 });
+    expect(sleep.mock.calls.map(([value]) => value)).toEqual([300, 600, 1200, 2400, 4800]);
+  });
+
+  it("gates valid multi-window app and method rate headers", async () => {
+    let now = 1_000;
+    const sleep = vi.fn().mockImplementation(async (milliseconds: number) => { now += milliseconds; });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200, headers: {
+        "X-App-Rate-Limit": "1:1,10:10",
+        "X-App-Rate-Limit-Count": "1:1,2:10",
+        "X-Method-Rate-Limit": "2:1,20:10",
+        "X-Method-Rate-Limit-Count": "2:1,2:10",
+      } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const client = new RiotHttpClient({ apiKey: "RGAPI-test", fetcher, sleep, clock: () => now });
+    await client.getJson(request);
+    await client.getJson(request);
+    expect(sleep).toHaveBeenCalledWith(1_000);
   });
 });

@@ -86,11 +86,7 @@ export class RiotHttpClient {
 }
 
 function isRecognizedNetworkFailure(error: unknown): boolean {
-  if (error instanceof TypeError) return true;
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as { isNetworkError?: unknown; code?: unknown };
-  if (candidate.isNetworkError === true) return true;
-  return typeof candidate.code === "string" && ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "EAI_AGAIN"].includes(candidate.code);
+  return error instanceof TypeError;
 }
 
 function categoryForStatus(status: number): RiotErrorCategory {
@@ -110,15 +106,49 @@ function parseRetryAfter(value: string | null): number | null {
 }
 
 function buildUrl(host: string, path: string, forbiddenValue: string): URL {
-  if (!path.startsWith("/") || path.includes("#") || path.includes("://") || /[\u0000-\u001f\u007f\r\n]/.test(path) || (forbiddenValue.length > 0 && path.includes(forbiddenValue))) {
+  const question = path.indexOf("?");
+  const pathname = question < 0 ? path : path.slice(0, question);
+  const query = question < 0 ? "" : path.slice(question + 1);
+  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname.includes("//") || pathname.includes("\\") || query.includes("\\") || path.includes("#") || path.includes("://") || path.includes("@") || /[\u0000-\u001f\u007f\r\n]/.test(path) || !validPercentEncoding(path) || containsDecodedSecret(path, forbiddenValue) || containsTraversal(pathname)) {
     throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
   }
   if (!/^[A-Za-z0-9.-]+\.api\.riotgames\.com$/.test(host) || host.includes("..")) {
     throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
   }
   const url = new URL(`https://${host}${path}`);
-  if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+  if (url.protocol !== "https:" || url.username || url.password || url.hash || url.pathname !== pathname) {
     throw new RiotHttpError("Riot schema request failed at /", null, false, "schema");
   }
   return url;
+}
+
+function validPercentEncoding(value: string): boolean {
+  return !/%(?![0-9A-Fa-f]{2})/.test(value) && !/%(?:2f|5c)/i.test(value);
+}
+
+function containsTraversal(pathname: string): boolean {
+  const decoded = decodeRepeated(pathname);
+  if (decoded === null || decoded.includes("\\") || /(?:^|\/)\.{1,2}(?:\/|$)/.test(pathname) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(decoded)) return true;
+  return decoded !== pathname && /(?:^|\/)\.{1,2}(?:\/|$)/.test(decoded);
+}
+
+function containsDecodedSecret(value: string, secret: string): boolean {
+  if (!secret) return false;
+  const decoded = decodeRepeated(value);
+  return decoded !== null && decoded.includes(secret);
+}
+
+function decodeRepeated(value: string): string | null {
+  let current = value;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      return null;
+    }
+    if (decoded === current) return current;
+    current = decoded;
+  }
+  return current;
 }
