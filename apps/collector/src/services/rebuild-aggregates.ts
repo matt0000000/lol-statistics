@@ -31,8 +31,9 @@ export type AggregateGroup = {
 };
 
 export type AggregateSink = {
-  flushGroup?: (publicationId: string, group: AggregateGroup) => Promise<void> | void;
-  replacePublication?: (publicationId: string, groups: Iterable<AggregateGroup>) => Promise<void> | void;
+  preparePublication?: (publicationId: string, runId?: string, patchId?: number) => Promise<unknown> | unknown;
+  flushGroup?: (publicationId: string, group: AggregateGroup) => Promise<unknown> | unknown;
+  replacePublication?: (publicationId: string, groups: Iterable<AggregateGroup>) => Promise<unknown> | unknown;
 };
 
 export type ObservationSource =
@@ -42,10 +43,14 @@ export type ObservationSource =
 
 export type RebuildInput = {
   publicationId: string;
+  runId?: string;
+  patchId?: number;
   source: ObservationSource;
   sink?: AggregateSink;
   pageSize?: number;
-  catalog?: ReadonlyMap<number, { category?: string; normalizedBaseId?: number }>;
+  catalog?: ReadonlyMap<number, { itemId?: number; category?: string; normalizedBaseId?: number }>;
+  /** Collect all groups only for pure in-memory verification; production sinks stream groups. */
+  collectResult?: boolean;
 };
 
 export type RebuildResult = {
@@ -64,14 +69,17 @@ function emptyGroup(championId: number, role: string): AggregateGroup {
 }
 function keyOf(row: AggregateObservation): string { return `${row.championId}:${row.role}`; }
 function validItem(item: AggregateItem, catalog?: RebuildInput["catalog"]): number | undefined {
+  const rawId = typeof item === "number" ? item : Number(item.itemId);
   const id = typeof item === "number" ? item : Number(item.normalizedBaseId ?? item.itemId);
   const quantity = typeof item === "number" ? 1 : item.quantity ?? 1;
   if (!Number.isSafeInteger(id) || id < 0 || !Number.isSafeInteger(quantity) || quantity < 1) return undefined;
-  const catalogItem = catalog?.get(id);
+  const catalogItem = catalog?.get(rawId);
   if (typeof item !== "number" && item.category && item.category !== "CORE") return undefined;
   if (catalogItem && catalogItem.category && catalogItem.category !== "CORE") return undefined;
   if (catalog && !catalogItem) return undefined;
-  return Number(catalogItem?.normalizedBaseId ?? id);
+  const normalized = Number(catalogItem?.normalizedBaseId ?? id);
+  if (catalog && ![...catalog.values()].some((entry) => Number(entry.normalizedBaseId ?? entry.itemId) === normalized && entry.category === "CORE")) return undefined;
+  return normalized;
 }
 
 function consume(group: AggregateGroup, row: AggregateObservation, catalog?: RebuildInput["catalog"]): void {
@@ -98,10 +106,11 @@ function consume(group: AggregateGroup, row: AggregateObservation, catalog?: Reb
   }
   if (row.boots !== undefined && row.boots !== null) {
     const raw = typeof row.boots === "number" ? row.boots : Number(row.boots.normalizedBaseId ?? row.boots.itemId);
-    const bootCatalog = catalog?.get(raw);
+    const bootCatalog = catalog?.get(typeof row.boots === "number" ? raw : row.boots.itemId);
     const wrongCategory = typeof row.boots !== "number" && !!row.boots.category && row.boots.category !== "BOOTS";
     const bootId = Number(bootCatalog?.normalizedBaseId ?? raw);
-    if (!wrongCategory && Number.isSafeInteger(bootId) && bootId >= 0 && (!catalog || (bootCatalog?.category === "BOOTS"))) {
+    const normalizedExists = !catalog || [...catalog.values()].some((entry) => Number(entry.normalizedBaseId ?? entry.itemId) === bootId && entry.category === "BOOTS");
+    if (!wrongCategory && Number.isSafeInteger(bootId) && bootId >= 0 && normalizedExists && (!catalog || (bootCatalog?.category === "BOOTS"))) {
       group.boots.set(bootId, addOutcome(group.boots.get(bootId), row.win));
     }
   }
@@ -112,14 +121,14 @@ async function* rowsFrom(source: ObservationSource, pageSize: number): AsyncGene
     let cursor: unknown = undefined;
     while (true) {
       const page = await source(cursor, pageSize);
-      for (const row of [...page.rows].sort(compareObservation)) yield row;
+      for (const row of page.rows) yield row;
       if (page.nextCursor === undefined || page.rows.length === 0) break;
       cursor = page.nextCursor;
     }
   } else if (Symbol.asyncIterator in Object(source)) {
     for await (const row of source as AsyncIterable<AggregateObservation>) yield row;
   } else {
-    for (const row of [...source as Iterable<AggregateObservation>].sort(compareObservation)) yield row;
+    for (const row of source as Iterable<AggregateObservation>) yield row;
   }
 }
 
@@ -129,22 +138,31 @@ function compareObservation(a: AggregateObservation, b: AggregateObservation): n
 
 export async function rebuildAggregates(input: RebuildInput): Promise<RebuildResult> {
   const groups = new Map<string, AggregateGroup>();
+  const streamingSink = !!input.sink?.preparePublication;
+  const collectResult = input.collectResult ?? (!input.sink || !streamingSink && !!input.sink?.replacePublication);
   const pageSize = input.pageSize ?? 500;
   let currentKey: string | undefined;
   let current: AggregateGroup | undefined;
+  const flushed = new Set<string>();
+  let previous: AggregateObservation | undefined;
+  if (input.sink?.preparePublication) await input.sink.preparePublication(input.publicationId, input.runId, input.patchId);
   for await (const row of rowsFrom(input.source, pageSize)) {
+    if (previous && compareObservation(row, previous) < 0) throw new Error("aggregate source order regression");
+    previous = row;
     const key = keyOf(row);
     if (currentKey !== undefined && key !== currentKey) {
-      if (current && input.sink?.flushGroup && !input.sink.replacePublication) await input.sink.flushGroup(input.publicationId, current);
+      if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(input.publicationId, current);
+      flushed.add(currentKey);
       current = undefined;
     }
+    if (flushed.has(key)) throw new Error("aggregate source group reappeared");
     currentKey = key;
-    current ??= groups.get(key) ?? emptyGroup(row.championId, row.role);
-    groups.set(key, current);
+    current ??= emptyGroup(row.championId, row.role);
+    if (collectResult) groups.set(key, current);
     consume(current, row, input.catalog);
   }
-  if (current && input.sink?.flushGroup && !input.sink.replacePublication) await input.sink.flushGroup(input.publicationId, current);
-  if (input.sink?.replacePublication) await input.sink.replacePublication(input.publicationId, groups.values());
+  if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(input.publicationId, current);
+  if (input.sink?.replacePublication && !streamingSink) await input.sink.replacePublication(input.publicationId, groups.values());
   const first = groups.values().next().value as AggregateGroup | undefined;
   return { publicationId: input.publicationId, groups, baseline: first?.baseline, items: first?.items, pairs: first?.pairs, trios: first?.trios, boots: first?.boots };
 }

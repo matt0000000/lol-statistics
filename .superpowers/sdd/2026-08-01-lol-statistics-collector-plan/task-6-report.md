@@ -55,3 +55,33 @@ The new integration files are environment-gated; no real PostgreSQL aggregate/ac
 Product implementation commit: `1123a05145faded6739032758aa4b68b248f6871` (`feat: publish verified item statistics atomically`).
 
 The local environment has no PostgreSQL server, so database constraints, concurrent publication races, rollback, and query plans remain unexecuted here. Async iterable callers must provide the documented deterministic ordering; page-function sources are sorted per page. The repository replacement path is transactional, while a custom sink remains responsible for its own staging/atomicity.
+
+## Fix round 1 (review findings)
+
+- Production `verifyPublication`/`publishAtomically` now accept only publication/run IDs, a database transaction, and the canonical repository. Caller-supplied snapshots are rejected at runtime; `verifyPublicationSnapshot` is explicitly test/diagnostic-only.
+- `lockAndLoad` locks target publication, run, patch, active publication rows, aggregate rows, catalog rows, and source observation/match rows in one SERIALIZABLE verification transaction. Activation conditionally switches the locked target, run, and patch with returning-row checks.
+- Run lifecycle is explicit: target publication must be inactive, owned by the run/patch, and the run must be `RUNNING` at `publish`; activation atomically sets `COMPLETED` and `publicationId`.
+- Canonical verification now requires catalog metadata, validates normalized/raw categories, strict canonical combination keys, complete match metadata, duplicate identities, empty-snapshot recomputation, and deterministic sorted failure codes.
+- Rebuild now validates global monotonic ordering for async/page sources, rejects group reappearance, flushes one group at a time, uses raw catalog keys before normalization, and supports `preparePublication` streaming sinks that clear only inactive owned targets.
+- Integration files now use `createMigratedTestDatabase` and contain real isolated replacement and activation cases (execution remains PostgreSQL-gated).
+
+Fix-round verification:
+
+- `bunx vitest run apps/collector/src/services/rebuild-aggregates.test.ts apps/collector/src/services/publish.test.ts` — PASS (8 tests).
+- `bunx vitest run` — PASS (162 tests), 6 PostgreSQL-gated suites skipped.
+- `bun run typecheck` — PASS for all workspaces.
+- `bunx drizzle-kit check` — PASS.
+- `bun run db:generate` — PASS; no schema changes.
+- `git diff --check` — PASS.
+
+Actual new integration attempt:
+
+```text
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts
+Error: connect ECONNREFUSED 127.0.0.1:5432
+Test Files 2 failed (2)
+Tests 2 failed (2)
+EXIT_STATUS=1
+```
+
+The fix-round code/tests are uncommitted at report-writing time; the follow-up commit hash is recorded by the coordinator after this report update.

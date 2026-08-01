@@ -12,7 +12,18 @@ const tables = [baselineAggregates, itemAggregates, combinationAggregates, boots
 export class AggregatesRepository implements AggregateSink {
   constructor(private readonly db: any) {}
 
+  async preparePublication(publicationId: string, runId?: string, patchId?: number): Promise<void> {
+    await this.db.transaction(async (tx: Tx) => {
+      const owner = (await tx.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+      const full = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+      if (!owner || owner.isActive || runId !== undefined && full.runId !== runId || patchId !== undefined && full.patchId !== patchId) throw new Error("aggregate rebuild requires an inactive owned publication");
+      for (const table of tables) await tx.delete(table).where(eq(table.publicationId, publicationId));
+    });
+  }
+
   async flushGroup(publicationId: string, group: AggregateGroup, tx: Tx = this.db): Promise<void> {
+    const owner = (await tx.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+    if (!owner || owner.isActive) throw new Error("aggregate writes require an inactive publication");
     const base = { publicationId, championId: group.championId, role: group.role };
     await tx.insert(baselineAggregates).values({ ...base, ...group.baseline }).onConflictDoUpdate({ target: [baselineAggregates.publicationId, baselineAggregates.championId, baselineAggregates.role], set: { wins: group.baseline.wins, losses: group.baseline.losses, sample: group.baseline.sample } });
     for (const [itemId, count] of group.items) await tx.insert(itemAggregates).values({ ...base, itemId, ...count }).onConflictDoUpdate({ target: [itemAggregates.publicationId, itemAggregates.championId, itemAggregates.role, itemAggregates.itemId], set: count });
@@ -23,6 +34,8 @@ export class AggregatesRepository implements AggregateSink {
 
   async replacePublication(publicationId: string, groups: Iterable<AggregateGroup>): Promise<void> {
     await this.db.transaction(async (tx: Tx) => {
+      const owner = (await tx.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+      if (!owner || owner.isActive) throw new Error("aggregate rebuild requires an inactive publication");
       for (const table of tables) await tx.delete(table).where(eq(table.publicationId, publicationId));
       for (const group of groups) await this.flushGroup(publicationId, group, tx);
     });
@@ -47,6 +60,37 @@ export class AggregatesRepository implements AggregateSink {
   async getPublication(id: string, tx: Tx = this.db) { return (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, id)).limit(1))[0]; }
   async getRun(id: string, tx: Tx = this.db) { return (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, id)).limit(1))[0]; }
 
+  /** Lock every canonical row participating in publication verification. */
+  async lockAndLoad(tx: Tx, publicationId: string, runId: string): Promise<any> {
+    const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+    const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
+    const patchId = publication?.patchId;
+    const patch = patchId ? (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0] : undefined;
+    await tx.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+    const [baseline, itemRows, combinations, boots] = await Promise.all([
+      tx.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, publicationId)).for("update"),
+      tx.select().from(itemAggregates).where(eq(itemAggregates.publicationId, publicationId)).for("update"),
+      tx.select().from(combinationAggregates).where(eq(combinationAggregates.publicationId, publicationId)).for("update"),
+      tx.select().from(bootsAggregates).where(eq(bootsAggregates.publicationId, publicationId)).for("update")
+    ]);
+    const catalogRows = patchId ? await tx.select().from(items).where(eq(items.patchId, patchId)).for("update") : [];
+    const catalog = new Map(catalogRows.map((row: any) => [row.itemId, row]));
+    const observations = patchId ? await this.loadSourceRows(tx, patchId) : [];
+    return { publicationId, runId, patchId: publication?.patchId, publication, run, patch, baseline, items: itemRows, combinations, boots, observations, itemCatalog: catalog };
+  }
+
+  private async loadSourceRows(db: Tx, patchId: number): Promise<CanonicalAggregateObservation[]> {
+    const joined = await db.select().from(participantObservations).innerJoin(matches, eq(matches.matchId, participantObservations.matchId)).where(eq(participantObservations.patchId, patchId)).orderBy(asc(participantObservations.championId), asc(participantObservations.role), asc(participantObservations.matchId), asc(participantObservations.participantId)).for("update");
+    const rows: CanonicalAggregateObservation[] = [];
+    for (const entry of joined) {
+      const o = entry.participant_observations;
+      const cores = await db.select({ itemId: participantCoreItems.itemId, quantity: participantCoreItems.quantity, category: items.category, normalizedBaseId: items.normalizedBaseId }).from(participantCoreItems).innerJoin(items, and(eq(items.patchId, participantCoreItems.patchId), eq(items.itemId, participantCoreItems.itemId))).where(and(eq(participantCoreItems.matchId, o.matchId), eq(participantCoreItems.participantId, o.participantId), eq(participantCoreItems.patchId, patchId))).for("update");
+      const boots = (await db.select({ itemId: participantBoots.itemId, category: items.category, normalizedBaseId: items.normalizedBaseId }).from(participantBoots).innerJoin(items, and(eq(items.patchId, participantBoots.patchId), eq(items.itemId, participantBoots.itemId))).where(and(eq(participantBoots.matchId, o.matchId), eq(participantBoots.participantId, o.participantId))).limit(1).for("update"))[0];
+      rows.push({ championId: o.championId, role: o.role, matchId: o.matchId, participantId: o.participantId, win: o.win, items: cores, boots, patchId, queueId: entry.matches.queueId, platformId: entry.matches.platformId, validationState: entry.matches.validationState });
+    }
+    return rows;
+  }
+
   async getObservations(patchId: number, tx: Tx = this.db): Promise<CanonicalAggregateObservation[]> {
     const result: CanonicalAggregateObservation[] = [];
     let cursor: { championId: number; role: string; matchId: string; participantId: number } | undefined;
@@ -59,16 +103,19 @@ export class AggregatesRepository implements AggregateSink {
     return result;
   }
 
-  async deactivateCurrent(tx: Tx = this.db): Promise<void> { await tx.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true)); }
-  async activate(tx: Tx, publicationId: string): Promise<void> {
-    const row = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
-    if (!row || row.isActive) throw new Error("publication is not eligible");
-    await tx.update(aggregatePublications).set({ isActive: true }).where(eq(aggregatePublications.id, publicationId));
-  }
-  async markRunPublished(tx: Tx, runId: string, publicationId: string): Promise<void> {
-    await tx.update(collectionRuns).set({ status: "COMPLETED", publicationId, finishedAt: new Date(), updatedAt: new Date() }).where(eq(collectionRuns.id, runId));
-    const publication = (await tx.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0];
-    if (publication) await tx.update(patches).set({ publishedAt: new Date() }).where(eq(patches.id, publication.patchId));
+  /** Safe single activation mutation; caller must have verified/locked canonical state. */
+  async activateVerified(tx: Tx, publicationId: string, runId: string): Promise<boolean> {
+    const target = (await tx.select().from(aggregatePublications).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.runId, runId), eq(aggregatePublications.isActive, false))).for("update").limit(1))[0];
+    if (!target) return false;
+    const active = await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+    await tx.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true));
+    const changed = await tx.update(aggregatePublications).set({ isActive: true }).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.isActive, false))).returning({ id: aggregatePublications.id });
+    if (changed.length !== 1) throw new Error("publication activation changed no rows");
+    const updatedRun = await tx.update(collectionRuns).set({ status: "COMPLETED", publicationId, finishedAt: new Date(), updatedAt: new Date() }).where(and(eq(collectionRuns.id, runId), sql`(${collectionRuns.publicationId} IS NULL OR ${collectionRuns.publicationId} = ${publicationId})`)).returning({ id: collectionRuns.id });
+    if (updatedRun.length !== 1) throw new Error("run publication changed no rows");
+    const updatedPatch = await tx.update(patches).set({ publishedAt: new Date() }).where(eq(patches.id, target.patchId)).returning({ id: patches.id });
+    if (updatedPatch.length !== 1) throw new Error("patch publication changed no rows");
+    return active.length >= 0;
   }
 
   async observationPage(patchId: number, cursor?: { championId: number; role: string; matchId: string; participantId: number }, pageSize = 500, db: Tx = this.db): Promise<{ rows: AggregateObservation[]; nextCursor?: typeof cursor }> {
