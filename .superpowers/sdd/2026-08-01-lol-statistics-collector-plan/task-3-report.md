@@ -49,3 +49,19 @@ Fix verification:
 - `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` and working-tree `git diff --check` — clean after removing EOF blank-line warnings.
 
 Fix migration: `0003_faulty_redwing.sql`, SHA-256 `0e7ced8b6bb47796f789fbb83519cbeb1b38f2d9b8a4caa05d26eac2b749af2a`.
+
+## Fix Round 2
+
+- Moved `updateCounters` and `incrementCounters` eligibility checks, `FOR UPDATE` locking, validation, and writes into one transaction so terminal transitions cannot be bypassed.
+- Made `LadderRepository.setOffset` transactional, run-locked, monotonic, and row-count checked for missing PUUID snapshots.
+- Added static service diagnostic codes (`invalid_response`, `invalid_checkpoint`, `dependency_failure`) while preserving privacy and never attaching raw dependency errors.
+
+Fix verification:
+
+- `bunx vitest run` — 13 files passed, 3 PostgreSQL/integration files skipped; 112 tests passed, 8 skipped.
+- `bunx vitest run apps/collector/src/services` — 2 files, 4 tests passed.
+- `bunx tsc --noEmit -p packages/database/tsconfig.json` and `bunx tsc --noEmit -p apps/collector/tsconfig.json` — passed.
+- `bun run db:generate` — no schema changes.
+- `git diff --check` and base-range `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` — clean.
+
+Fix Round 2 commit: `ae57306e4bbe444777d6caa6b93949b407df3c40` plus this report update.

@@ -59,10 +59,14 @@ export class LadderRepository {
     validateRunId(runId);
     validatePuuid(puuid);
     validateOffset(offset);
-    await assertEligibleRun(this.db, runId, false);
-    await this.db.update(ladderSnapshots)
-      .set({ nextMatchOffset: sql`greatest(${ladderSnapshots.nextMatchOffset}, ${offset})` })
-      .where(and(eq(ladderSnapshots.runId, runId), eq(ladderSnapshots.puuid, puuid)));
+    await this.db.transaction(async (tx: any) => {
+      await assertEligibleRun(tx, runId, true);
+      const updated = await tx.update(ladderSnapshots)
+        .set({ nextMatchOffset: sql`greatest(${ladderSnapshots.nextMatchOffset}, ${offset})` })
+        .where(and(eq(ladderSnapshots.runId, runId), eq(ladderSnapshots.puuid, puuid)))
+        .returning({ puuid: ladderSnapshots.puuid });
+      if (updated.length === 0) throw new Error("ladder snapshot not found");
+    });
   }
 }
 

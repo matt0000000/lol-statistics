@@ -80,33 +80,33 @@ export class CollectionRunRepository {
   }
 
   async updateCounters(runId: string, counters: Partial<Pick<CollectionRun, "matchesDiscovered" | "matchesIngested" | "observationsAccepted" | "observationsRejected">>): Promise<CollectionRun> {
-    await this.requireEligible(runId);
-    const values: Record<string, unknown> = { updatedAt: new Date() };
-    const allowedKeys = new Set(["matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected"]);
-    for (const [key, value] of Object.entries(counters)) {
-      if (!allowedKeys.has(key)) throw new Error("invalid collection counter");
-      if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error("invalid collection counter");
-      values[key] = value;
-    }
-    return this.applyUpdate(runId, values);
+    return this.db.transaction(async (tx: any) => {
+      await this.lockedEligible(tx, runId);
+      const values = counterValues(counters);
+      const [updated] = await tx.update(collectionRuns).set({ ...values, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+      if (!updated) throw new Error("collection run not found");
+      return updated;
+    });
   }
 
   async incrementCounters(runId: string, counters: Partial<Pick<CollectionRun, "matchesDiscovered" | "matchesIngested" | "observationsAccepted" | "observationsRejected">>): Promise<CollectionRun> {
-    await this.requireEligible(runId);
-    const values: Record<string, unknown> = { updatedAt: new Date() };
-    const allowedKeys = new Set(["matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected"]);
-    const columns = {
-      matchesDiscovered: collectionRuns.matchesDiscovered,
-      matchesIngested: collectionRuns.matchesIngested,
-      observationsAccepted: collectionRuns.observationsAccepted,
-      observationsRejected: collectionRuns.observationsRejected
-    };
-    for (const [key, value] of Object.entries(counters)) {
-      if (!allowedKeys.has(key)) throw new Error("invalid collection counter");
-      if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error("invalid collection counter");
-      values[key] = sql`${columns[key as keyof typeof columns]} + ${value}`;
-    }
-    return this.applyUpdate(runId, values);
+    return this.db.transaction(async (tx: any) => {
+      await this.lockedEligible(tx, runId);
+      const columns = {
+        matchesDiscovered: collectionRuns.matchesDiscovered,
+        matchesIngested: collectionRuns.matchesIngested,
+        observationsAccepted: collectionRuns.observationsAccepted,
+        observationsRejected: collectionRuns.observationsRejected
+      };
+      const values: Record<string, unknown> = { updatedAt: new Date() };
+      for (const [key, value] of Object.entries(counters)) {
+        validateCounter(key, value);
+        values[key] = sql`${columns[key as keyof typeof columns]} + ${value}`;
+      }
+      const [updated] = await tx.update(collectionRuns).set(values).where(eq(collectionRuns.id, runId)).returning();
+      if (!updated) throw new Error("collection run not found");
+      return updated;
+    });
   }
 
   private async applyUpdate(runId: string, values: Partial<typeof collectionRuns.$inferInsert>): Promise<CollectionRun> {
@@ -127,11 +127,24 @@ export class CollectionRunRepository {
     return run;
   }
 
-  private async requireEligible(runId: string): Promise<CollectionRun> {
-    const run = await this.require(runId);
+  private async lockedEligible(tx: any, runId: string): Promise<CollectionRun> {
+    const run = await this.locked(tx, runId);
     if (run.status !== "PENDING" && run.status !== "RUNNING") throw new Error("collection run is not eligible");
     return run;
   }
+}
+
+function counterValues(counters: Record<string, unknown>): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(counters)) {
+    validateCounter(key, value);
+    values[key] = value;
+  }
+  return values;
+}
+
+function validateCounter(key: string, value: unknown): void {
+  if (!["matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected"].includes(key) || !Number.isSafeInteger(value) || (value as number) < 0) throw new Error("invalid collection counter");
 }
 
 function safeErrorDetails(value: unknown): CollectionErrorDetails {

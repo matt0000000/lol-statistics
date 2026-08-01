@@ -26,7 +26,7 @@ describe("discoverMatches", () => {
   it("redacts dependency failures", async () => {
     const repository = memoryDiscoveryRepository();
     const matchClient = { listMatchIds: vi.fn().mockRejectedValue(new Error("private-puuid leaked")) };
-    await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.toThrow("match discovery failed");
+    await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.toMatchObject({ code: "dependency_failure" });
     await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.not.toThrow("private-puuid");
   });
 });
