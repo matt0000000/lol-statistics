@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { aggregatePublications, collectionRuns, createDatabase, patches, participantRejections } from "@lol/database";
 
 export type HealthOptions = { env?: Record<string, string | undefined>; json?: boolean; write?: (line: string) => void; database?: ReturnType<typeof createDatabase> };
@@ -20,14 +20,20 @@ export async function healthCommand(options: HealthOptions = {}): Promise<number
     const url = options.env?.DATABASE_URL ?? process.env.DATABASE_URL;
     if (!url) throw new Error("database configuration unavailable");
     if (!database) { database = createDatabase(url, { max: 2, connect_timeout: 1 }); owned = true; }
-    const [patch] = await database.db.select({ patchKey: patches.patchKey }).from(patches).where(eq(patches.isActive, true)).limit(1);
-    const [run] = await database.db.select().from(collectionRuns).orderBy(desc(collectionRuns.updatedAt), desc(collectionRuns.startedAt)).limit(1);
-    const unknownRows = run ? await database.db.select({ count: participantRejections.participantId }).from(participantRejections).where(and(eq(participantRejections.patchId, run.patchId ?? -1), eq(participantRejections.reason, "unknown_item"))) : [];
+    const [activePublication] = await database.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).limit(1);
+    const [publishedPatch] = activePublication
+      ? await database.db.select({ patchKey: patches.patchKey }).from(patches).where(eq(patches.id, activePublication.patchId)).limit(1)
+      : [];
+    const [run] = activePublication
+      ? await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, activePublication.runId)).limit(1)
+      : await database.db.select().from(collectionRuns).where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED"])).orderBy(desc(collectionRuns.updatedAt)).limit(1);
+    const [currentPatch] = await database.db.select({ patchKey: patches.patchKey }).from(patches).where(eq(patches.isActive, true)).limit(1);
+    const unknownRows = run ? await database.db.select({ participantId: participantRejections.participantId }).from(participantRejections).where(and(eq(participantRejections.patchId, run.patchId ?? -1), eq(participantRejections.reason, "unknown_item"))) : [];
     const snapshot: HealthSnapshot = {
-      patch: patch?.patchKey ?? null,
+      patch: publishedPatch?.patchKey ?? currentPatch?.patchKey ?? null,
       status: run?.status ?? "IDLE",
       stage: run?.stage ?? "CATALOG",
-      dataAge: run?.updatedAt ? new Date(run.updatedAt).toISOString() : null,
+      dataAge: activePublication?.collectedAt ? new Date(activePublication.collectedAt).toISOString() : null,
       counters: {
         matchesDiscovered: run?.matchesDiscovered ?? 0,
         matchesIngested: run?.matchesIngested ?? 0,

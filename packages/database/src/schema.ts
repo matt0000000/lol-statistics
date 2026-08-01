@@ -92,7 +92,9 @@ export const collectionRuns = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     status: runStatus("status").notNull().default("PENDING"),
-    stage: text("stage").notNull().default("CATALOG"),
+    // Persist the publisher's canonical lowercase stage values. Public APIs
+    // may expose uppercase names, but the database contract is lowercase.
+    stage: text("stage").notNull().default("catalog"),
     patchId: integer("patch_id").references(() => patches.id),
     coverageDays: integer("coverage_days").notNull().default(35),
     minimumSample: integer("minimum_sample").notNull().default(100),

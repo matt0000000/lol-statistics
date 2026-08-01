@@ -10,8 +10,8 @@
     "typecheck": "bun --filter '*' typecheck",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun --filter @lol/database migrate",
-    "collect": "bun --filter @lol/collector collect",
-    "collector:health": "bun --filter @lol/collector health"
+    "collect": "bun --silent apps/collector/src/cli.ts collect",
+    "collector:health": "bun --silent apps/collector/src/cli.ts health"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

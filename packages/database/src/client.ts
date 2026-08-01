@@ -15,12 +15,9 @@ export function createDatabase(url: string, options: DatabaseOptions = {}): Data
     withAdvisoryLock: async <T>(fn: () => Promise<T>): Promise<T> => {
       // Keep the advisory lock on a dedicated session while work uses the regular pool.
       const lockSql = postgres(url, { max: 1 });
-      const acquired = await lockSql<{ locked: boolean }[]>`select pg_try_advisory_lock(hashtext('lol-statistics-collector')) as locked`;
-      if (!acquired[0]?.locked) {
-        await lockSql.end();
-        throw Object.assign(new Error("collector scheduler overlap"), { category: "exhausted_transient" });
-      }
       try {
+        const acquired = await lockSql<{ locked: boolean }[]>`select pg_try_advisory_lock(hashtext('lol-statistics-collector')) as locked`;
+        if (!acquired[0]?.locked) throw Object.assign(new Error("collector scheduler overlap"), { category: "exhausted_transient" });
         return await fn();
       } finally {
         try { await lockSql`select pg_advisory_unlock(hashtext('lol-statistics-collector'))`; } finally { await lockSql.end(); }

@@ -1,13 +1,23 @@
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { createDatabase, CollectionRunRepository } from "@lol/database";
+import { and, asc, eq } from "drizzle-orm";
+import {
+  aggregatePublications, AggregatesRepository, CollectionRunRepository, createDatabase, discoveredMatches, items,
+  ladderSnapshots, matches as matchesTable, patches, MatchesRepository, ObservationsRepository
+} from "@lol/database";
 import { RiotHttpClient, LeagueClient, MatchClient } from "@lol/riot-client";
 import { DataDragonClient, syncCatalog } from "@lol/item-catalog";
 import { readCollectorConfig } from "../config";
 import { createCollectorLogger } from "../logger";
+import { discoverMatches } from "../services/discover-matches";
+import { ingestMatch } from "../services/ingest-match";
+import { rebuildAggregates } from "../services/rebuild-aggregates";
+import { publishAtomically, verifyPublication } from "../services/publish";
+import { snapshotLadder } from "../services/snapshot-ladder";
 import { runCollection, exitCodeForError, type PipelineDependencies } from "../pipeline";
 
 export type CollectOptions = { argv?: string[]; env?: Record<string, string | undefined>; write?: (line: string) => void; dependencies?: PipelineDependencies; database?: ReturnType<typeof createDatabase> };
 
+/** Build the real production workers. Every stage is backed by Riot clients and repositories. */
 export async function collectCommand(options: CollectOptions = {}): Promise<number> {
   const env = options.env ?? process.env;
   const write = options.write ?? ((line: string) => process.stdout.write(line));
@@ -24,29 +34,77 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
     const logger = createCollectorLogger({ write });
     const http = new RiotHttpClient({ apiKey: config.riotApiKey });
     const league = new LeagueClient(http);
-    const matches = new MatchClient(http);
+    const matchClient = new MatchClient(http);
     const runs = new CollectionRunRepository(database.db);
-    // Real service wiring is injected at the stage boundary. Catalog and Riot clients are
-    // deliberately constructed here so a production invocation never uses fake data.
+    const ladderRepo = new (await import("@lol/database")).LadderRepository(database.db);
+    const discoveryRepo = new MatchesRepository(database.db);
+    const observationsRepo = new ObservationsRepository(database.db);
+    const dataDragon = new DataDragonClient();
+    let catalogPromise: ReturnType<DataDragonClient["fetchTrCatalog"]> | undefined;
+    const loadCatalog = () => (catalogPromise ??= dataDragon.fetchTrCatalog());
+    const resolvePatchId = async (): Promise<number | undefined> => {
+      const [row] = await database!.db.select({ id: patches.id }).from(patches).where(eq(patches.isActive, true)).limit(1);
+      return row?.id;
+    };
     const dependencies: PipelineDependencies = {
       runs: runs as unknown as PipelineDependencies["runs"],
       advisoryLock: database.withAdvisoryLock,
+      resolvePatchId,
       logger,
       stageHandlers: {
         CATALOG: async (run) => {
-          const result = await syncCatalog(database!, await new DataDragonClient().fetchTrCatalog());
+          const result = await syncCatalog(database!, await loadCatalog());
           await runs.bindPatch(run.id, result.patchId);
         },
-        LADDER: async (run) => {
-          const { LadderRepository } = await import("@lol/database");
-          const { snapshotLadder } = await import("../services/snapshot-ladder");
-          await snapshotLadder({ runId: run.id, leagueClient: league, repository: new LadderRepository(database!.db) });
+        LADDER: async (run) => snapshotLadder({ runId: run.id, leagueClient: league, repository: ladderRepo }),
+        DISCOVERY: async (run) => {
+          if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
+          const snapshots = await database!.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, run.id));
+          const start = new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000);
+          for (const player of snapshots) await discoverMatches({ runId: run.id, puuid: player.puuid, coverageStart: start, matchClient, repository: discoveryRepo });
         },
-        DISCOVERY: async () => { throw Object.assign(new Error("discovery worker is not configured"), { invariant: true }); },
-        MATCHES: async () => { throw Object.assign(new Error("match ingestion worker is not configured"), { invariant: true }); },
-        AGGREGATES: async () => { throw Object.assign(new Error("aggregate rebuild worker is not configured"), { invariant: true }); },
-        VERIFY: async () => { throw Object.assign(new Error("publication verifier is not configured"), { invariant: true }); },
-        PUBLISH: async () => { throw Object.assign(new Error("publication worker is not configured"), { invariant: true }); }
+        MATCHES: async (run) => {
+          if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
+          const [patch] = await database!.db.select().from(patches).where(eq(patches.id, run.patchId)).limit(1);
+          if (!patch) throw Object.assign(new Error("patch not found"), { invariant: true });
+          const [players, discovered, catalogRows] = await Promise.all([
+            database!.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, run.id)),
+            database!.db.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(eq(discoveredMatches.runId, run.id)),
+            database!.db.select().from(items).where(eq(items.patchId, run.patchId))
+          ]);
+          const eligible = new Map<string, any>(players.map((p) => [p.puuid, { tier: p.tier, division: p.division }]));
+          const catalog = new Map(catalogRows.map((row) => [row.itemId, row]));
+          for (const { matchId } of discovered) {
+            const [existing] = await database!.db.select({ id: matchesTable.matchId }).from(matchesTable).where(eq(matchesTable.matchId, matchId)).limit(1);
+            if (existing) continue; // durable fetch checkpoint: never refetch canonical matches
+            const match = await matchClient.getMatch(matchId);
+            await ingestMatch({ runId: run.id, patchId: run.patchId, activePatch: patch.patchKey, match, eligiblePlayers: eligible, catalog, observations: observationsRepo, logger });
+          }
+        },
+        AGGREGATES: async (run) => {
+          if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
+          let publicationId = typeof run.publicationId === "string" ? run.publicationId : undefined;
+          if (!publicationId) {
+            const [publication] = await database!.db.insert(aggregatePublications).values({ patchId: run.patchId, runId: run.id, coverageStartedAt: new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000), minimumSample: run.minimumSample ?? 100 }).returning({ id: aggregatePublications.id });
+            if (!publication) throw new Error("publication could not be created");
+            publicationId = publication.id;
+            await runs.bindPublication(run.id, publicationId);
+          }
+          const aggregateRepo = new AggregatesRepository(database!.db);
+          const catalogRows = await database!.db.select().from(items).where(eq(items.patchId, run.patchId));
+          const source = async (cursor: unknown, pageSize: number) => aggregateRepo.observationPage(run.patchId!, cursor as any, pageSize);
+          await rebuildAggregates({ publicationId, runId: run.id, patchId: run.patchId, source, sink: aggregateRepo, catalog: new Map(catalogRows.map((row) => [row.itemId, row])) });
+        },
+        VERIFY: async (run) => {
+          if (typeof run.publicationId !== "string" || !run.patchId) throw Object.assign(new Error("publication owner is missing"), { invariant: true });
+          await runs.updateStage(run.id, "publish");
+          const report = await verifyPublication({ publicationId: run.publicationId, runId: run.id, database: database! });
+          if (!report.valid) throw Object.assign(new Error("publication invariants failed"), { invariant: true });
+        },
+        PUBLISH: async (run) => {
+          if (typeof run.publicationId !== "string") throw Object.assign(new Error("publication owner is missing"), { invariant: true });
+          await publishAtomically({ publicationId: run.publicationId, runId: run.id, database: database! });
+        }
       }
     };
     await runCollection(dependencies);

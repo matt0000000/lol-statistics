@@ -1,4 +1,5 @@
-ALTER TABLE "collection_runs" ALTER COLUMN "stage" SET DEFAULT 'CATALOG';--> statement-breakpoint
+UPDATE "collection_runs" SET "stage" = CASE lower("stage") WHEN 'snapshot' THEN 'ladder' WHEN 'ingest' THEN 'matches' WHEN 'aggregate' THEN 'aggregates' ELSE lower("stage") END;--> statement-breakpoint
+ALTER TABLE "collection_runs" ALTER COLUMN "stage" SET DEFAULT 'catalog';--> statement-breakpoint
 ALTER TABLE "collection_runs" ADD COLUMN "patch_id" integer;--> statement-breakpoint
 ALTER TABLE "collection_runs" ADD COLUMN "coverage_days" integer DEFAULT 35 NOT NULL;--> statement-breakpoint
 ALTER TABLE "collection_runs" ADD COLUMN "minimum_sample" integer DEFAULT 100 NOT NULL;--> statement-breakpoint

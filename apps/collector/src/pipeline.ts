@@ -29,6 +29,7 @@ export type PipelineDependencies = {
     completeStage: (runId: string, stage: CollectionStage) => Promise<unknown>;
     markFailed?: (runId: string, category: FailureCategory, detail: Record<string, unknown>, stage: CollectionStage) => Promise<unknown>;
     markRunning?: (runId: string) => Promise<unknown>;
+    get?: (runId: string) => Promise<PipelineRun | undefined>;
   };
   stageHandlers: Partial<Record<CollectionStage, (run: PipelineRun) => Promise<unknown>>> & Record<string, (run: PipelineRun) => Promise<unknown>>;
   advisoryLock?: { withLock<T>(fn: () => Promise<T>): Promise<T> } | ((fn: () => Promise<unknown>) => Promise<unknown>);
@@ -36,31 +37,36 @@ export type PipelineDependencies = {
   patchId?: number;
   coverageDays?: number;
   minimumSample?: number;
+  resolvePatchId?: () => Promise<number | undefined>;
 };
 
 /** Runs one resumable collection. Stage completion is recorded only after the handler resolves. */
 export async function runCollection(dependencies: PipelineDependencies): Promise<string> {
   const execute = async () => {
+    const resolvedPatchId = dependencies.patchId ?? await dependencies.resolvePatchId?.();
     const run = await dependencies.runs.resumeOrCreate({
-      patchId: dependencies.patchId,
+      patchId: resolvedPatchId,
       coverageDays: dependencies.coverageDays ?? 35,
       minimumSample: dependencies.minimumSample ?? 100
     });
     await dependencies.runs.markRunning?.(run.id);
+    let activeStage: CollectionStage = currentStage(run);
     try {
       for (const stage of COLLECTION_STAGES) {
+        activeStage = stage;
         if (await dependencies.runs.isStageComplete(run.id, stage)) continue;
         const handler = dependencies.stageHandlers[stage];
         if (typeof handler !== "function") throw new Error(`missing collection stage handler: ${stage}`);
-        await handler(run);
+        const refreshed = await dependencies.runs.get?.(run.id);
+        await handler(refreshed ?? run);
         await dependencies.runs.completeStage(run.id, stage);
       }
       return run.id;
     } catch (error) {
       const category = classifyFailure(error);
       const detail = privateFailureDetail(error);
-      await dependencies.runs.markFailed?.(run.id, category, detail, currentStage(run));
-      dependencies.logger?.error?.({ event: "collection_failed", runId: run.id, stage: currentStage(run), category });
+      await dependencies.runs.markFailed?.(run.id, category, detail, activeStage);
+      dependencies.logger?.error?.({ event: "collection_failed", runId: run.id, stage: activeStage, category });
       throw error;
     }
   };

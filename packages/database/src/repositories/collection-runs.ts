@@ -13,6 +13,7 @@ export type CollectionRunDatabase = {
 const STAGE_ORDER = ["discovery", "snapshot", "ingest", "aggregate", "publish"] as const;
 export const COLLECTION_STAGES = ["CATALOG", "LADDER", "DISCOVERY", "MATCHES", "AGGREGATES", "VERIFY", "PUBLISH"] as const;
 type CollectionStage = (typeof COLLECTION_STAGES)[number];
+const PERSISTED_STAGE: Record<CollectionStage, string> = { CATALOG: "catalog", LADDER: "ladder", DISCOVERY: "discovery", MATCHES: "matches", AGGREGATES: "aggregates", VERIFY: "verify", PUBLISH: "publish" };
 const ERROR_CODES = new Set(["DISCOVERY_FAILED", "SNAPSHOT_FAILED", "INGEST_FAILED", "VALIDATION_FAILED", "UNKNOWN"]);
 export type CollectionErrorDetails = { code: string; stage?: (typeof STAGE_ORDER)[number] };
 
@@ -26,15 +27,20 @@ export class CollectionRunRepository {
     const minimumSample = input.minimumSample ?? 100;
     if (!Number.isSafeInteger(coverageDays) || coverageDays <= 0 || !Number.isSafeInteger(minimumSample) || minimumSample < 0) throw new Error("invalid collection parameters");
     const rows = await this.db.select().from(collectionRuns)
-      .where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED"]))
+      .where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED", "COMPLETED"]))
       .orderBy(desc(collectionRuns.updatedAt), desc(collectionRuns.startedAt));
-    const match = rows.find((row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) =>
+    const sameConfig = (row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) =>
       (row.patchId ?? null) === (input.patchId ?? null) && (row.coverageDays ?? 35) === coverageDays && (row.minimumSample ?? 100) === minimumSample
-    );
+    ;
+    // Completed runs are scheduler-idempotent: an invocation for the same
+    // immutable patch/config returns the existing publication instead of
+    // forking a duplicate run.
+    const match = rows.find((row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) => row.status === "COMPLETED" && sameConfig(row))
+      ?? rows.find(sameConfig);
     if (match) return match;
     const [created] = await this.db.insert(collectionRuns).values({
       status: "PENDING",
-      stage: "CATALOG",
+      stage: "catalog",
       patchId: input.patchId,
       coverageDays,
       minimumSample
@@ -52,6 +58,10 @@ export class CollectionRunRepository {
     return COLLECTION_STAGES.indexOf(current) > COLLECTION_STAGES.indexOf(target);
   }
 
+  async markRunning(runId: string): Promise<CollectionRun> {
+    return this.updateStatus(runId, "RUNNING");
+  }
+
   /** Advance the durable stage only after its handler has committed all work. */
   async completeStage(runId: string, stage: string): Promise<CollectionRun> {
     const target = normalizeStage(stage);
@@ -62,7 +72,8 @@ export class CollectionRunRepository {
       if (COLLECTION_STAGES.indexOf(currentStage) > COLLECTION_STAGES.indexOf(target)) return current;
       if (currentStage !== target && current.status !== "COMPLETED") throw new Error("collection stage is not current");
       const final = target === "PUBLISH";
-      const values: Record<string, unknown> = { updatedAt: new Date(), stage: final ? "PUBLISH" : COLLECTION_STAGES[COLLECTION_STAGES.indexOf(target) + 1] };
+      const next = final ? "PUBLISH" : COLLECTION_STAGES[COLLECTION_STAGES.indexOf(target) + 1];
+      const values: Record<string, unknown> = { updatedAt: new Date(), stage: PERSISTED_STAGE[next] };
       if (final && current.status !== "COMPLETED") { values.status = "COMPLETED"; values.finishedAt = new Date(); }
       const [updated] = await tx.update(collectionRuns).set(values).where(eq(collectionRuns.id, runId)).returning();
       if (!updated) throw new Error("collection run not found");
@@ -73,7 +84,8 @@ export class CollectionRunRepository {
   async markFailed(runId: string, category: string, detail: Record<string, unknown> = {}, stage?: string): Promise<CollectionRun> {
     if (!/^[a-z_]{1,64}$/.test(category)) throw new Error("invalid failure category");
     const safeDetail = Object.fromEntries(Object.entries(detail).filter(([key, value]) => /^(type|status|code)$/.test(key) && (typeof value === "string" || typeof value === "number")));
-    const [updated] = await this.db.update(collectionRuns).set({ status: "FAILED", finishedAt: new Date(), stage: stage ? normalizeStage(stage) : undefined, errorDetails: { category, detail: safeDetail }, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+    const normalized = stage ? normalizeStage(stage) : undefined;
+    const [updated] = await this.db.update(collectionRuns).set({ status: "FAILED", finishedAt: new Date(), ...(normalized ? { stage: PERSISTED_STAGE[normalized] } : {}), errorDetails: { category, detail: safeDetail }, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
     if (!updated) throw new Error("collection run not found");
     return updated;
   }
@@ -121,14 +133,14 @@ export class CollectionRunRepository {
   }
 
   async updateStage(runId: string, stage: string): Promise<CollectionRun> {
-    if (!STAGE_ORDER.includes(stage as (typeof STAGE_ORDER)[number])) throw new Error("invalid collection stage");
+    const normalized = normalizeStage(stage);
     return this.db.transaction(async (tx: any) => {
       const current = await this.locked(tx, runId);
       if (current.status === "COMPLETED" || current.status === "FAILED") throw new Error("collection run is not eligible");
-      const currentRank = STAGE_ORDER.indexOf(current.stage as (typeof STAGE_ORDER)[number]);
-      const nextRank = STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]);
+      const currentRank = COLLECTION_STAGES.indexOf(normalizeStage(String(current.stage)));
+      const nextRank = COLLECTION_STAGES.indexOf(normalized);
       if (nextRank < currentRank) throw new Error("collection stage regression");
-      const [updated] = await tx.update(collectionRuns).set({ stage, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+      const [updated] = await tx.update(collectionRuns).set({ stage: PERSISTED_STAGE[normalized], updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
       return updated;
     });
   }
