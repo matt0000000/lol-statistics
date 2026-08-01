@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { toPatchKey } from "@lol/domain";
 import { createDatabase, champions as championsTable, items as itemsTable, patches } from "@lol/database";
 import { DataDragonClient } from "./client";
@@ -66,6 +66,13 @@ export async function upsertChampions(
     name: champion.name,
     iconUrl: champion.image.full
   }));
+  if (values.length === 0) {
+    await transaction.delete(championsTable).where(eq(championsTable.patchId, patchId));
+  } else {
+    await transaction
+      .delete(championsTable)
+      .where(and(eq(championsTable.patchId, patchId), notInArray(championsTable.championId, values.map((value) => value.championId))));
+  }
   for (const value of values) {
     await transaction
       .insert(championsTable)
@@ -85,6 +92,14 @@ export async function upsertClassifiedItems(
   overrides: Record<number, ItemCategory>,
   aliases: ItemAliases = {}
 ): Promise<number> {
+  const itemIds = itemCatalog.map((item) => Number(item.id));
+  if (itemIds.length === 0) {
+    await transaction.delete(itemsTable).where(eq(itemsTable.patchId, patchId));
+  } else {
+    await transaction
+      .delete(itemsTable)
+      .where(and(eq(itemsTable.patchId, patchId), notInArray(itemsTable.itemId, itemIds)));
+  }
   for (const item of itemCatalog) {
     const itemId = Number(item.id);
     const classification = classifyItem(item, overrides);

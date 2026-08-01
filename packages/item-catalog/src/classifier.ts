@@ -28,10 +28,9 @@ export function classifyItem(
   if (item.tags.includes("Consumable")) {
     return { category: "EXCLUDED_CONSUMABLE", reason: "consumable" };
   }
-  // Some completed boots (for example 3006 in Data Dragon) advertise a
-  // cosmetic/alternate upgrade in `into`; boots still have their own stable
-  // category and must be handled before generic components.
-  if (item.tags.includes("Boots")) {
+  // Completed boots have component inputs (`from`). Base Boots (1001) have
+  // an upgrade path but no inputs and are therefore components themselves.
+  if (item.tags.includes("Boots") && item.from.length > 0) {
     return { category: "BOOTS", reason: "completed boots" };
   }
   if (item.into && item.into.length > 0) {

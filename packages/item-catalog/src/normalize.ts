@@ -13,6 +13,7 @@ export function validateAliases(aliases: ItemAliases, itemIds: ReadonlySet<numbe
       throw new Error("Invalid item alias");
     }
     if (!itemIds.has(target)) throw new Error("Item alias target is not in catalog");
+    if (aliases[target] !== undefined) throw new Error("Item alias target must be canonical");
     const seen = new Set<number>([source]);
     let current = target;
     while (aliases[current] !== undefined) {
