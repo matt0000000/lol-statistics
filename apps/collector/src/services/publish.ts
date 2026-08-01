@@ -123,7 +123,7 @@ export async function verifyPublicationSnapshot(input: PublishSnapshot): Promise
     }
   }
   const acceptedObservations = observations.filter((row) => row.patchId === input.patchId && row.queueId === 420 && row.platformId === "TR1" && row.validationState === "VALID");
-  const recomputed = await rebuildAggregates({ publicationId: input.publicationId, source: acceptedObservations, catalog: catalog as any });
+  const recomputed = await rebuildAggregates({ publicationId: input.publicationId, runId: input.runId, patchId: input.patchId, source: acceptedObservations, catalog: catalog as any, collectResult: true });
   const expected = [...recomputed.groups.values()].flatMap((group) => [
     { kind: "baseline", championId: group.championId, role: group.role, ...group.baseline },
     ...[...group.items].map(([itemId, c]) => ({ kind: "item", championId: group.championId, role: group.role, itemId, ...c })),

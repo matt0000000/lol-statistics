@@ -30,10 +30,11 @@ export type AggregateGroup = {
   boots: Map<number, Counter>;
 };
 
+export type AggregateOwner = { publicationId: string; runId: string; patchId: number };
 export type AggregateSink = {
-  preparePublication?: (publicationId: string, runId?: string, patchId?: number) => Promise<unknown> | unknown;
-  flushGroup?: (publicationId: string, group: AggregateGroup) => Promise<unknown> | unknown;
-  replacePublication?: (publicationId: string, groups: Iterable<AggregateGroup>) => Promise<unknown> | unknown;
+  preparePublication: (owner: AggregateOwner) => Promise<unknown> | unknown;
+  flushGroup: (group: AggregateGroup) => Promise<unknown> | unknown;
+  replacePublication?: (groups: Iterable<AggregateGroup>) => Promise<unknown> | unknown;
 };
 
 export type ObservationSource =
@@ -43,8 +44,8 @@ export type ObservationSource =
 
 export type RebuildInput = {
   publicationId: string;
-  runId?: string;
-  patchId?: number;
+  runId: string;
+  patchId: number;
   source: ObservationSource;
   sink?: AggregateSink;
   pageSize?: number;
@@ -138,20 +139,20 @@ function compareObservation(a: AggregateObservation, b: AggregateObservation): n
 
 export async function rebuildAggregates(input: RebuildInput): Promise<RebuildResult> {
   const groups = new Map<string, AggregateGroup>();
-  const streamingSink = !!input.sink?.preparePublication;
+  const streamingSink = !!input.sink;
   const collectResult = input.collectResult ?? (!input.sink || !streamingSink && !!input.sink?.replacePublication);
   const pageSize = input.pageSize ?? 500;
   let currentKey: string | undefined;
   let current: AggregateGroup | undefined;
   const flushed = new Set<string>();
   let previous: AggregateObservation | undefined;
-  if (input.sink?.preparePublication) await input.sink.preparePublication(input.publicationId, input.runId, input.patchId);
+  if (input.sink) await input.sink.preparePublication({ publicationId: input.publicationId, runId: input.runId, patchId: input.patchId });
   for await (const row of rowsFrom(input.source, pageSize)) {
     if (previous && compareObservation(row, previous) < 0) throw new Error("aggregate source order regression");
     previous = row;
     const key = keyOf(row);
     if (currentKey !== undefined && key !== currentKey) {
-      if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(input.publicationId, current);
+      if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(current);
       flushed.add(currentKey);
       current = undefined;
     }
@@ -161,8 +162,8 @@ export async function rebuildAggregates(input: RebuildInput): Promise<RebuildRes
     if (collectResult) groups.set(key, current);
     consume(current, row, input.catalog);
   }
-  if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(input.publicationId, current);
-  if (input.sink?.replacePublication && !streamingSink) await input.sink.replacePublication(input.publicationId, groups.values());
+  if (current && input.sink?.flushGroup && (streamingSink || !input.sink.replacePublication)) await input.sink.flushGroup(current);
+  if (input.sink?.replacePublication && !streamingSink) await input.sink.replacePublication(groups.values());
   const first = groups.values().next().value as AggregateGroup | undefined;
   return { publicationId: input.publicationId, groups, baseline: first?.baseline, items: first?.items, pairs: first?.pairs, trios: first?.trios, boots: first?.boots };
 }
