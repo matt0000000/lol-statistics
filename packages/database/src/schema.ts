@@ -1,0 +1,249 @@
+import { sql } from "drizzle-orm";
+import {
+  bigint,
+  bigserial,
+  boolean,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  serial,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+  varchar
+} from "drizzle-orm/pg-core";
+
+export const runStatus = pgEnum("run_status", ["PENDING", "RUNNING", "COMPLETED", "FAILED"]);
+export const validationState = pgEnum("validation_state", ["PENDING", "VALID", "INVALID", "REJECTED"]);
+export const role = pgEnum("role", ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]);
+export const tier = pgEnum("tier", ["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]);
+export const itemCategory = pgEnum("item_category", [
+  "CORE",
+  "BOOTS",
+  "STARTER",
+  "CONSUMABLE",
+  "TRINKET",
+  "QUEST",
+  "SUPPORT",
+  "MODE",
+  "UNKNOWN"
+]);
+
+export const patches = pgTable(
+  "patches",
+  {
+    id: serial("id").primaryKey(),
+    version: text("version").notNull(),
+    patchKey: text("patch_key").notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true, mode: "date" }),
+    publishedAt: timestamp("published_at", { withTimezone: true, mode: "date" }),
+    isActive: boolean("is_active").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [unique("patches_version_unique").on(table.version), check("patches_version_nonempty", sql`length(${table.version}) > 0`)]
+);
+
+export const champions = pgTable(
+  "champions",
+  {
+    patchId: integer("patch_id").notNull().references(() => patches.id),
+    championId: integer("champion_id").notNull(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    iconUrl: text("icon_url").notNull(),
+    splashUrl: text("splash_url"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.patchId, table.championId] }), unique("champions_patch_slug_unique").on(table.patchId, table.slug)]
+);
+
+export const items = pgTable(
+  "items",
+  {
+    patchId: integer("patch_id").notNull().references(() => patches.id),
+    itemId: integer("item_id").notNull(),
+    baseItemId: integer("base_item_id").notNull(),
+    category: itemCategory("category").notNull(),
+    name: text("name").notNull(),
+    price: integer("price").notNull(),
+    iconUrl: text("icon_url").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.patchId, table.itemId] }), check("items_price_nonnegative", sql`${table.price} >= 0`)]
+);
+
+export const collectionRuns = pgTable(
+  "collection_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    status: runStatus("status").notNull().default("PENDING"),
+    stage: text("stage").notNull().default("discovery"),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
+    matchesDiscovered: integer("matches_discovered").notNull().default(0),
+    matchesIngested: integer("matches_ingested").notNull().default(0),
+    observationsAccepted: integer("observations_accepted").notNull().default(0),
+    observationsRejected: integer("observations_rejected").notNull().default(0),
+    errorDetails: jsonb("error_details"),
+    publicationId: uuid("publication_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [index("collection_runs_status_started_at_idx").on(table.status, table.startedAt)]
+);
+
+export const ladderSnapshots = pgTable(
+  "ladder_snapshots",
+  {
+    runId: uuid("run_id").notNull().references(() => collectionRuns.id),
+    puuid: text("puuid").notNull(),
+    queue: integer("queue").notNull().default(420),
+    tier: tier("tier").notNull(),
+    division: varchar("division", { length: 3 }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.runId, table.puuid] }), index("ladder_snapshots_run_tier_idx").on(table.runId, table.tier)]
+);
+
+export const matches = pgTable(
+  "matches",
+  {
+    matchId: text("match_id").primaryKey(),
+    patchId: integer("patch_id").notNull().references(() => patches.id),
+    platformId: text("platform_id").notNull(),
+    queueId: integer("queue_id").notNull(),
+    gameVersion: text("game_version").notNull(),
+    gameCreation: timestamp("game_creation", { withTimezone: true, mode: "date" }).notNull(),
+    gameDuration: integer("game_duration").notNull(),
+    validationState: validationState("validation_state").notNull().default("PENDING"),
+    validationError: text("validation_error"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [index("matches_patch_validation_idx").on(table.patchId, table.validationState), check("matches_duration_nonnegative", sql`${table.gameDuration} >= 0`)]
+);
+
+export const participantObservations = pgTable(
+  "participant_observations",
+  {
+    matchId: text("match_id").notNull().references(() => matches.matchId),
+    participantId: integer("participant_id").notNull(),
+    patchId: integer("patch_id").notNull().references(() => patches.id),
+    puuid: text("puuid").notNull(),
+    championId: integer("champion_id").notNull(),
+    role: role("role").notNull(),
+    win: boolean("win").notNull(),
+    tier: tier("tier").notNull(),
+    division: varchar("division", { length: 3 }).notNull(),
+    gameDuration: integer("game_duration").notNull(),
+    rawFinalSlots: jsonb("raw_final_slots").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.matchId, table.participantId] }), index("participant_observations_patch_champion_role_idx").on(table.patchId, table.championId, table.role)]
+);
+
+export const participantCoreItems = pgTable(
+  "participant_core_items",
+  {
+    matchId: text("match_id").notNull(),
+    participantId: integer("participant_id").notNull(),
+    slotIndex: integer("slot_index").notNull(),
+    itemId: integer("item_id").notNull(),
+    quantity: integer("quantity").notNull().default(1)
+  },
+  (table) => [primaryKey({ columns: [table.matchId, table.participantId, table.slotIndex] }), check("participant_core_items_slot_nonnegative", sql`${table.slotIndex} >= 0`)]
+);
+
+export const participantBoots = pgTable(
+  "participant_boots",
+  {
+    matchId: text("match_id").notNull(),
+    participantId: integer("participant_id").notNull(),
+    itemId: integer("item_id").notNull(),
+    slotIndex: integer("slot_index")
+  },
+  (table) => [primaryKey({ columns: [table.matchId, table.participantId] })]
+);
+
+export const aggregatePublications = pgTable(
+  "aggregate_publications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    patchId: integer("patch_id").notNull().references(() => patches.id),
+    runId: uuid("run_id").notNull().references(() => collectionRuns.id),
+    coverageStartedAt: timestamp("coverage_started_at", { withTimezone: true, mode: "date" }).notNull(),
+    collectedAt: timestamp("collected_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    minimumSample: integer("minimum_sample").notNull().default(100),
+    isActive: boolean("is_active").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("aggregate_publications_one_active_idx").on(table.isActive).where(sql`${table.isActive} = true`),
+    check("aggregate_publications_minimum_sample_nonnegative", sql`${table.minimumSample} >= 0`)
+  ]
+);
+
+export const itemAggregates = pgTable(
+  "item_aggregates",
+  {
+    publicationId: uuid("publication_id").notNull().references(() => aggregatePublications.id),
+    championId: integer("champion_id").notNull(),
+    role: role("role").notNull(),
+    itemId: integer("item_id").notNull(),
+    wins: integer("wins").notNull().default(0),
+    losses: integer("losses").notNull().default(0),
+    sample: integer("sample").notNull().default(0)
+  },
+  (table) => [primaryKey({ columns: [table.publicationId, table.championId, table.role, table.itemId] }), check("item_aggregates_counts_nonnegative", sql`${table.wins} >= 0 AND ${table.losses} >= 0 AND ${table.sample} >= 0`)]
+);
+
+export const combinationAggregates = pgTable(
+  "combination_aggregates",
+  {
+    publicationId: uuid("publication_id").notNull().references(() => aggregatePublications.id),
+    championId: integer("champion_id").notNull(),
+    role: role("role").notNull(),
+    size: integer("size").notNull(),
+    combinationKey: text("combination_key").notNull(),
+    wins: integer("wins").notNull().default(0),
+    losses: integer("losses").notNull().default(0),
+    sample: integer("sample").notNull().default(0)
+  },
+  (table) => [primaryKey({ columns: [table.publicationId, table.championId, table.role, table.size, table.combinationKey] }), check("combination_aggregates_size_valid", sql`${table.size} IN (2, 3)`)]
+);
+
+export const bootsAggregates = pgTable(
+  "boots_aggregates",
+  {
+    publicationId: uuid("publication_id").notNull().references(() => aggregatePublications.id),
+    championId: integer("champion_id").notNull(),
+    role: role("role").notNull(),
+    itemId: integer("item_id").notNull(),
+    wins: integer("wins").notNull().default(0),
+    losses: integer("losses").notNull().default(0),
+    sample: integer("sample").notNull().default(0)
+  },
+  (table) => [primaryKey({ columns: [table.publicationId, table.championId, table.role, table.itemId] }), check("boots_aggregates_counts_nonnegative", sql`${table.wins} >= 0 AND ${table.losses} >= 0 AND ${table.sample} >= 0`)]
+);
+
+export const schemaContract = {
+  patches: "pk(id), unique(version)",
+  champions: "pk(patch_id, champion_id), unique(patch_id, slug)",
+  items: "pk(patch_id, item_id)",
+  collectionRuns: "pk(id), index(status, started_at)",
+  ladderSnapshots: "pk(run_id, puuid), index(run_id, tier)",
+  matches: "pk(match_id), index(patch_id, validation_state)",
+  participantObservations: "pk(match_id, participant_id), index(patch_id, champion_id, role)",
+  participantCoreItems: "pk(match_id, participant_id, slot_index)",
+  participantBoots: "pk(match_id, participant_id)",
+  aggregatePublications: "pk(id), unique active partial index",
+  itemAggregates: "pk(publication_id, champion_id, role, item_id)",
+  combinationAggregates: "pk(publication_id, champion_id, role, size, combination_key)",
+  bootsAggregates: "pk(publication_id, champion_id, role, item_id)"
+} as const;
+
+export type Schema = typeof schemaContract;

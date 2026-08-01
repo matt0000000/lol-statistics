@@ -1,0 +1,18 @@
+{
+  "name": "@lol/database",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "migrate": "cd ../.. && bun packages/database/src/migrate.ts"
+  },
+  "dependencies": {
+    "@lol/domain": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9"
+  }
+}

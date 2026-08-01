@@ -31,6 +31,17 @@
         "@types/react-dom": "^19.2.4",
       },
     },
+    "packages/database": {
+      "name": "@lol/database",
+      "dependencies": {
+        "@lol/domain": "workspace:*",
+        "drizzle-orm": "^0.45.2",
+        "postgres": "^3.4.9",
+      },
+    },
+    "packages/domain": {
+      "name": "@lol/domain",
+    },
   },
   "packages": {
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
@@ -150,6 +161,10 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@lol/collector": ["@lol/collector@workspace:apps/collector"],
+
+    "@lol/database": ["@lol/database@workspace:packages/database"],
+
+    "@lol/domain": ["@lol/domain@workspace:packages/domain"],
 
     "@lol/web": ["@lol/web@workspace:apps/web"],
 
