@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ingestMatch, parseFinalInventory } from "./ingest-match";
+import { ingestMatch, IngestMatchError, parseFinalInventory } from "./ingest-match";
 
 describe("parseFinalInventory", () => {
   const catalog = [
@@ -35,5 +35,11 @@ describe("parseFinalInventory", () => {
       info: { platformId: "TR1", queueId: 420, gameVersion: "secret-version", gameCreation: 1, gameDuration: 1800, participants: [{ participantId: 1, puuid: "secret-puuid", championId: 1, teamPosition: "BOTTOM", win: true, gameEndedInEarlySurrender: false, item0: 0, item1: 0, item2: 0, item3: 0, item4: 0, item5: 0, item6: 0 }] }
     }, eligiblePlayers: new Map([["secret-puuid", { tier: "EMERALD", division: "I" }]]), catalog, observations: { saveValidatedMatch }});
     expect(saveValidatedMatch.mock.calls[0]?.[3]).toEqual([{ accepted: false, participantId: 1, reason: "patch" }]);
+  });
+
+  it("rejects an empty runtime match before remake parsing or repository calls", async () => {
+    const saveValidatedMatch = vi.fn();
+    await expect(ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: { info: { participants: [] } } as never, eligiblePlayers: new Map(), catalog, observations: { saveValidatedMatch } })).rejects.toEqual(new IngestMatchError("empty_participants"));
+    expect(saveValidatedMatch).not.toHaveBeenCalled();
   });
 });

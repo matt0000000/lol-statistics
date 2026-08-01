@@ -43,3 +43,12 @@ The initial implementation needed no schema migration; Fix Round 1 adds the requ
 - Tightened `toPatchKey` to major/minor plus numeric suffix components only, and tightened Riot match DTO participant arrays to non-empty.
 - Fresh verification: `bunx vitest run packages/domain/src apps/collector/src/services packages/riot-client/src packages/database/src/repositories packages/database/src/schema.contract.test.ts --passWithNoTests` — 85 passed, 22 skipped; all workspace typechecks passed; `db:generate` reports no changes; `git diff --check` clean.
 - PostgreSQL attempt ran all 12 integration tests and failed visibly with `connect ECONNREFUSED 127.0.0.1:5432` (database unavailable).
+
+## Fix Round 3
+
+- Added a static `IngestMatchError("empty_participants")` service-boundary guard; runtime-cast empty payloads now fail before remake parsing or repository calls, with no payload values in the error.
+- Split inventory replay coverage into independent fresh-DB raw-slot, normalized core quantity/slot, and boots-only variants; complete canonical row and run-counter snapshots are compared after each durable replay conflict.
+- Expanded inactive/mismatched patch rejection assertions across matches, observations, rejections, core/boots, discovery work, and all run counters.
+- `toPatchKey` now rejects unsafe numeric components/overflow while canonicalizing safe leading-zero components; official multi-component versions remain accepted.
+- Fresh focused verification: 16 passed, 14 skipped (integration gated); all workspace typechecks passed; db:generate reports no changes; diff check clean.
+- Final PostgreSQL attempt ran all 14 isolated integration cases and failed visibly with `connect ECONNREFUSED 127.0.0.1:5432`.

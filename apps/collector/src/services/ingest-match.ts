@@ -55,7 +55,12 @@ export type IngestMatchInput = {
 };
 export type IngestMatchResult = Awaited<ReturnType<ObservationsRepository["saveValidatedMatch"]>>;
 
+export class IngestMatchError extends Error {
+  constructor(readonly code: "empty_participants") { super(`match ingestion failed (${code})`); }
+}
+
 export async function ingestMatch(input: IngestMatchInput): Promise<IngestMatchResult> {
+  if (!input.match?.info || !Array.isArray(input.match.info.participants) || input.match.info.participants.length === 0) throw new IngestMatchError("empty_participants");
   const remake = input.match.info.participants.some((participant) => participant.gameEndedInEarlySurrender === true);
   const activePatch = normalizeActivePatch(input.activePatch);
   // Keep malformed active-patch diagnostics inside participant eligibility; do

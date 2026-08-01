@@ -7,7 +7,11 @@ describe("toPatchKey", () => {
     expect(() => toPatchKey("16")).toThrow("Invalid Riot version");
   });
 
-  it.each(["16.15.foo", "16.15.", "16.15.1foo", " 16.15", "+16.15", "16.15 "]) ("rejects malformed version %s", (version) => {
+  it.each(["16.15.foo", "16.15.", "16.15.1foo", " 16.15", "+16.15", "16.15 ", "999999999999999999999999.15", "16.999999999999999999999999", "16.15.999999999999999999999999"]) ("rejects malformed version %s", (version) => {
     expect(() => toPatchKey(version)).toThrow("Invalid Riot version");
+  });
+
+  it("canonicalizes leading-zero numeric components", () => {
+    expect(toPatchKey("016.015.001")).toBe("16.15");
   });
 });

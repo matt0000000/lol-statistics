@@ -93,13 +93,19 @@ describe.skipIf(!url)("validated participant observations", () => {
     await expect(repository.saveValidatedMatch(otherRun!.id, patchId, matchPayload(), acceptedParticipants())).rejects.toThrow("does not belong");
     expect(await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID))).toHaveLength(0);
     expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(0);
+    expect(await database.db.select().from(participantCoreItems).where(eq(participantCoreItems.matchId, MATCH_ID))).toHaveLength(0);
+    expect(await database.db.select().from(participantBoots).where(eq(participantBoots.matchId, MATCH_ID))).toHaveLength(0);
+    expect(await database.db.select().from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, MATCH_ID)))).toHaveLength(1);
+    const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(run).toMatchObject({ matchesDiscovered: 0, matchesIngested: 0, observationsAccepted: 0, observationsRejected: 0 });
   });
 
   it("rejects an empty canonical participant set without inserting a match", async () => {
     await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), [])).rejects.toThrow("no participants");
     expect(await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID))).toHaveLength(0);
     const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
-    expect(run).toMatchObject({ matchesIngested: 0, observationsAccepted: 0, observationsRejected: 0 });
+    expect(run).toMatchObject({ matchesDiscovered: 0, matchesIngested: 0, observationsAccepted: 0, observationsRejected: 0 });
   });
 
   it("serializes concurrent identical saves and keeps exact counters", async () => {
@@ -145,16 +151,30 @@ describe.skipIf(!url)("validated participant observations", () => {
     await expectUnchangedAfterFailure(database, runId, before);
   });
 
-  it("fails safely when accepted inventory/core/boots/raw slots change", async () => {
+  it("fails safely when accepted rawFinalSlots change", async () => {
     const original = acceptedParticipants();
     await repository.saveValidatedMatch(runId, patchId, matchPayload(), original);
     const before = await canonicalSnapshot(database, runId);
     const changed = acceptedParticipants();
-    if (changed[0]?.accepted) {
-      changed[0].observation.rawFinalSlots = [3031, 3031, 0, 0, 0, 0, 0];
-      changed[0].observation.coreItems = [{ itemId: 3031, quantity: 2, slotIndex: 0 }];
-      changed[0].observation.boots = undefined;
-    }
+    if (changed[0]?.accepted) changed[0].observation.rawFinalSlots = [7002, 3031, 3172, 1001, 2055, 1, 0];
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
+
+  it("fails safely when normalized core item quantity/slot changes", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), acceptedParticipants());
+    const before = await canonicalSnapshot(database, runId);
+    const changed = acceptedParticipants();
+    if (changed[0]?.accepted) changed[0].observation.coreItems = [{ itemId: 3031, quantity: 3, slotIndex: 1 }];
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
+
+  it("fails safely when boots change", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), acceptedParticipants());
+    const before = await canonicalSnapshot(database, runId);
+    const changed = acceptedParticipants();
+    if (changed[0]?.accepted) changed[0].observation.boots = { itemId: 3172, slotIndex: 3 };
     await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
     await expectUnchangedAfterFailure(database, runId, before);
   });
@@ -196,7 +216,7 @@ async function expectUnchangedAfterFailure(database: Awaited<ReturnType<typeof c
   expect(after.rejections).toEqual(before.rejections);
   expect(after.cores).toEqual(before.cores);
   expect(after.boots).toEqual(before.boots);
-  expect(after.runs[0]).toMatchObject({ status: "FAILED", matchesIngested: before.runs[0]?.matchesIngested, observationsAccepted: before.runs[0]?.observationsAccepted, observationsRejected: before.runs[0]?.observationsRejected, errorDetails: { code: "INGEST_FAILED", stage: "ingest" } });
+  expect(after.runs[0]).toMatchObject({ status: "FAILED", matchesDiscovered: before.runs[0]?.matchesDiscovered, matchesIngested: before.runs[0]?.matchesIngested, observationsAccepted: before.runs[0]?.observationsAccepted, observationsRejected: before.runs[0]?.observationsRejected, errorDetails: { code: "INGEST_FAILED", stage: "ingest" } });
 }
 
 function matchPayload(overrides: Partial<{ gameVersion: string; gameCreation: number; gameDuration: number }> = {}) {
