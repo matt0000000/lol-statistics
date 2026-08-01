@@ -84,4 +84,4 @@ Tests 2 failed (2)
 EXIT_STATUS=1
 ```
 
-The fix-round code/tests are uncommitted at report-writing time; the follow-up commit hash is recorded by the coordinator after this report update.
+Fix-round code/tests commit: `57f5b03c16ec74d2af1aa85afe23660166ce052a` (`fix: enforce canonical aggregate publication invariants`).
