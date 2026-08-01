@@ -29,3 +29,20 @@ Implemented the typed Riot HTTP client with a per-instance rate-limit gate, dete
 ## Remaining concerns
 
 The gate derives a reset interval from Riot's count/limit headers because the headers do not provide an absolute reset timestamp. Malformed buckets fail open. URL host validation permits any single or multi-label Riot API subdomain ending in `.api.riotgames.com`, covering both platform and regional routing used by later clients.
+
+## Fix Round 1
+
+Implementation and adversarial-test fixes are in commit `ed692679bff40f182bc90aac0bf012a94718e1ba`.
+
+- Error messages are static category text and never include request-controlled path, query, host, response, or fetch-error content.
+- Only recognized fetch network failures (`TypeError`, explicit `isNetworkError`, and known transport error codes) are retried; programmer and sleeper errors propagate unchanged.
+- A per-client async mutex serializes rate-gated fetch attempts and releases in `finally`, including error paths.
+- Rate-limit headers now require strict two-field integer buckets with matching windows; malformed, duplicate, negative, nonfinite, and extra-field values fail safe.
+- Added adversarial tests for redaction, URL attacks, redirect policy, malformed `Retry-After`, retry bounds/jitter, network classification, concurrency ordering, and mutex release.
+
+Fix Round 1 verification:
+
+- `bunx vitest run packages/riot-client` — 16 passed.
+- `bunx vitest run` — 9 files passed, 2 skipped; 75 passed, 6 skipped.
+- `bun run typecheck` — all workspace packages passed.
+- `git diff --check` — passed.
