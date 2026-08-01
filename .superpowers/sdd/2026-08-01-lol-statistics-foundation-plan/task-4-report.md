@@ -134,7 +134,7 @@ Result: 13 passed.
 
 - `packages/item-catalog/src/contracts.ts`
 - `packages/item-catalog/src/client.test.ts`
-- Fix Round 2 commit: pending at report authoring.
+- Fix Round 2 implementation commit: `f7a03f6`.
 
 ### Residual concerns
 
