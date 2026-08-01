@@ -113,3 +113,30 @@ EXIT_STATUS=1
 ```
 
 Fix-round-2 product commit: `685636e5da31ccef3592616639f4737ee30b1402` (`fix: harden canonical publication trust boundary`).
+
+## Fix round 3 (owner-bound rebuild lifecycle)
+
+- `AggregateOwner` is now mandatory (`publicationId`, `runId`, `patchId`) and every sink must implement `preparePublication(owner)` plus owner-bound `flushGroup`; arbitrary publication IDs are no longer accepted by flush/replace.
+- `AggregatesRepository` binds its session to the exact owner only after a successful inactive/ownership check and clears stale rows during prepare. Flush and replacement require preparation and re-lock exact ownership/inactive state; activation is not present on the rebuild repository.
+- Rebuild inputs require all three owner IDs and the pure tests use lifecycle-aware sinks. A target becoming active or an owner mismatch aborts writes.
+
+Fix-round-3 verification:
+
+- `bunx vitest run apps/collector/src/services/rebuild-aggregates.test.ts apps/collector/src/services/publish.test.ts` — PASS (10 tests).
+- `bunx vitest run` — PASS (165 tests), 6 PostgreSQL-gated suites skipped.
+- `bun run typecheck` — PASS for all workspaces.
+- `bunx drizzle-kit check` — PASS.
+- `bun run db:generate` — PASS; no schema changes.
+- `git diff --check` — PASS.
+
+Actual aggregate/publication integration attempt:
+
+```text
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts
+Error: connect ECONNREFUSED 127.0.0.1:5432
+Test Files 2 failed (2)
+Tests 2 failed (2)
+EXIT_STATUS=1
+```
+
+Fix-round-3 product commit: `3d03ffd24fcca43cb4903be39146126172d12dd7` (`fix: bind aggregate rebuilds to owned publications`).
