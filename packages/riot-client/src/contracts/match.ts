@@ -22,7 +22,7 @@ export type MatchParticipant = z.infer<typeof participantSchema>;
 const metadataSchema = z.object({
   dataVersion: z.string().min(1),
   matchId: matchIdSchema,
-  participants: z.array(z.string().min(1)),
+  participants: z.array(z.string().min(1)).min(1),
 });
 
 const infoSchema = z.object({
@@ -31,7 +31,7 @@ const infoSchema = z.object({
   gameVersion: z.string().min(1),
   gameCreation: z.number().int().nonnegative(),
   gameDuration: z.number().int().nonnegative(),
-  participants: z.array(participantSchema),
+  participants: z.array(participantSchema).min(1),
 });
 
 export const matchSchema = z.object({ metadata: metadataSchema, info: infoSchema }).superRefine((match, context) => {

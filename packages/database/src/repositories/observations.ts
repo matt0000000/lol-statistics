@@ -55,6 +55,7 @@ export class ObservationsRepository {
   }
 
   private async saveInTransaction(tx: any, runId: string, patchId: number, match: IngestMatch, participants: readonly ParsedParticipant[]): Promise<IngestResult> {
+    if (participants.length === 0) throw new Error("match has no participants");
     await assertEligibleRun(tx, runId, true);
     if (!Number.isSafeInteger(patchId) || patchId < 1) throw new Error("invalid patch");
     const patch = (await tx.select().from(patches).where(eq(patches.id, patchId)).limit(1))[0];

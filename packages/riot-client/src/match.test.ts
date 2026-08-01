@@ -98,6 +98,10 @@ describe("MatchClient", () => {
     expect(matchSchema.parse(remakeFixture).info.gameDuration).toBe(90);
   });
 
+  it("rejects empty participant payloads", () => {
+    expect(() => matchSchema.parse({ ...validMatch, metadata: { ...validMatch.metadata, participants: [] }, info: { ...validMatch.info, participants: [] } })).toThrow();
+  });
+
   it("rejects null and non-object list inputs with a controlled error", async () => {
     const client = new MatchClient(fakeRiotHttp([]), { now: () => 1_785_100_000 });
     await expect(client.listMatchIds(null as never)).rejects.toThrow("invalid Riot client input");

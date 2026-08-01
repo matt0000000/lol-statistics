@@ -35,3 +35,11 @@ The initial implementation needed no schema migration; Fix Round 1 adds the requ
 - Rejected-only matches persist as `REJECTED` with static `NO_ELIGIBLE_PARTICIPANTS`; accepted matches remain `VALID`. Active patch is required by ingestion and the repository enforces `patches.is_active = true`.
 - Fix-round focused/full relevant suite: 30 passed, 17 skipped (integration gated); all package typechecks passed; `db:generate` reports no pending schema changes; `git diff --check` clean.
 - PostgreSQL attempt with `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats` ran all 7 integration cases and failed visibly with `connect ECONNREFUSED 127.0.0.1:5432`.
+
+## Fix Round 2
+
+- Corrected integration coverage for inactive patch IDs versus active patch/game-version mismatch, and added strict empty-participant rejection with no match/counter mutation.
+- Added isolated replay-variant cases for PUUID, inventory/core/boots/raw slots, match duration, and rejection reason changes; all assert canonical rows remain unchanged while the run is durably failed.
+- Tightened `toPatchKey` to major/minor plus numeric suffix components only, and tightened Riot match DTO participant arrays to non-empty.
+- Fresh verification: `bunx vitest run packages/domain/src apps/collector/src/services packages/riot-client/src packages/database/src/repositories packages/database/src/schema.contract.test.ts --passWithNoTests` — 85 passed, 22 skipped; all workspace typechecks passed; `db:generate` reports no changes; `git diff --check` clean.
+- PostgreSQL attempt ran all 12 integration tests and failed visibly with `connect ECONNREFUSED 127.0.0.1:5432` (database unavailable).

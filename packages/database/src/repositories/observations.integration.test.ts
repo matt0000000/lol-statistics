@@ -86,12 +86,20 @@ describe.skipIf(!url)("validated participant observations", () => {
 
   it("rejects patch, missing run, and missing discovery atomically", async () => {
     const [otherPatch] = await database.db.insert(patches).values({ version: "16.14.1", patchKey: "16.14" }).returning({ id: patches.id });
-    await expect(repository.saveValidatedMatch(runId, otherPatch!.id, matchPayload(), acceptedParticipants())).rejects.toThrow("patch mismatch");
+    await expect(repository.saveValidatedMatch(runId, otherPatch!.id, matchPayload(), acceptedParticipants())).rejects.toThrow("not active");
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload({ gameVersion: "16.14.1" }), acceptedParticipants())).rejects.toThrow("patch mismatch");
     await expect(repository.saveValidatedMatch("00000000-0000-4000-8000-000000000000", patchId, matchPayload(), acceptedParticipants())).rejects.toThrow("run not found");
     const [otherRun] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "ingest" }).returning({ id: collectionRuns.id });
     await expect(repository.saveValidatedMatch(otherRun!.id, patchId, matchPayload(), acceptedParticipants())).rejects.toThrow("does not belong");
     expect(await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID))).toHaveLength(0);
     expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
+  });
+
+  it("rejects an empty canonical participant set without inserting a match", async () => {
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), [])).rejects.toThrow("no participants");
+    expect(await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID))).toHaveLength(0);
+    const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(run).toMatchObject({ matchesIngested: 0, observationsAccepted: 0, observationsRejected: 0 });
   });
 
   it("serializes concurrent identical saves and keeps exact counters", async () => {
@@ -126,10 +134,73 @@ describe.skipIf(!url)("validated participant observations", () => {
     expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
     expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(1);
   });
+
+  it("fails safely when an accepted participant PUUID changes", async () => {
+    const original = acceptedParticipants();
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), original);
+    const before = await canonicalSnapshot(database, runId);
+    const changed = acceptedParticipants();
+    if (changed[0]?.accepted) changed[0].observation.puuid = "changed-private-puuid";
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
+
+  it("fails safely when accepted inventory/core/boots/raw slots change", async () => {
+    const original = acceptedParticipants();
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), original);
+    const before = await canonicalSnapshot(database, runId);
+    const changed = acceptedParticipants();
+    if (changed[0]?.accepted) {
+      changed[0].observation.rawFinalSlots = [3031, 3031, 0, 0, 0, 0, 0];
+      changed[0].observation.coreItems = [{ itemId: 3031, quantity: 2, slotIndex: 0 }];
+      changed[0].observation.boots = undefined;
+    }
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
+
+  it("fails safely when match duration changes", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), acceptedParticipants());
+    const before = await canonicalSnapshot(database, runId);
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload({ gameDuration: 1_801 }), acceptedParticipants())).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
+
+  it("fails safely when a rejected participant reason changes", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), acceptedParticipants());
+    const before = await canonicalSnapshot(database, runId);
+    const changed = acceptedParticipants();
+    const rejection = changed.find((part) => !part.accepted);
+    if (rejection && !rejection.accepted) rejection.reason = "duration";
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
 });
 
-function matchPayload() {
-  return { metadata: { matchId: MATCH_ID }, info: { platformId: "TR1", queueId: 420, gameVersion: "16.15.1", gameCreation: 1_722_470_400_000, gameDuration: 1_800 } };
+async function canonicalSnapshot(database: Awaited<ReturnType<typeof createMigratedTestDatabase>>, runId: string) {
+  const [matchRows, observations, rejections, cores, boots, runs] = await Promise.all([
+    database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID)),
+    database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID)),
+    database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID)),
+    database.db.select().from(participantCoreItems).where(eq(participantCoreItems.matchId, MATCH_ID)),
+    database.db.select().from(participantBoots).where(eq(participantBoots.matchId, MATCH_ID)),
+    database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId))
+  ]);
+  return { matchRows, observations, rejections, cores, boots, runs };
+}
+
+async function expectUnchangedAfterFailure(database: Awaited<ReturnType<typeof createMigratedTestDatabase>>, runId: string, before: Awaited<ReturnType<typeof canonicalSnapshot>>) {
+  const after = await canonicalSnapshot(database, runId);
+  expect(after.matchRows).toEqual(before.matchRows);
+  expect(after.observations).toEqual(before.observations);
+  expect(after.rejections).toEqual(before.rejections);
+  expect(after.cores).toEqual(before.cores);
+  expect(after.boots).toEqual(before.boots);
+  expect(after.runs[0]).toMatchObject({ status: "FAILED", matchesIngested: before.runs[0]?.matchesIngested, observationsAccepted: before.runs[0]?.observationsAccepted, observationsRejected: before.runs[0]?.observationsRejected, errorDetails: { code: "INGEST_FAILED", stage: "ingest" } });
+}
+
+function matchPayload(overrides: Partial<{ gameVersion: string; gameCreation: number; gameDuration: number }> = {}) {
+  return { metadata: { matchId: MATCH_ID }, info: { platformId: "TR1", queueId: 420, gameVersion: overrides.gameVersion ?? "16.15.1", gameCreation: overrides.gameCreation ?? 1_722_470_400_000, gameDuration: overrides.gameDuration ?? 1_800 } };
 }
 
 function acceptedParticipants(): ParsedParticipant[] {
