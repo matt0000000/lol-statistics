@@ -1,6 +1,6 @@
 [
   {
-    "puuid": "fixture-player-emerald",
+    "summonerId": "fixture-summoner-emerald",
     "queueType": "RANKED_SOLO_5x5",
     "tier": "EMERALD",
     "rank": "II",

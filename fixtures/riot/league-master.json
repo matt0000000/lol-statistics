@@ -1,9 +1,9 @@
 {
+  "tier": "MASTER",
+  "queue": "RANKED_SOLO_5x5",
   "entries": [
     {
-      "puuid": "fixture-player-master",
-      "queueType": "RANKED_SOLO_5x5",
-      "tier": "MASTER",
+      "summonerId": "fixture-summoner-master",
       "rank": "I",
       "leaguePoints": 321,
       "wins": 30,

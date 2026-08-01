@@ -35,8 +35,15 @@ const infoSchema = z.object({
 });
 
 export const matchSchema = z.object({ metadata: metadataSchema, info: infoSchema }).superRefine((match, context) => {
+  const metadataUnique = new Set(match.metadata.participants);
+  const infoPuuids = match.info.participants.map((participant) => participant.puuid);
+  const infoPuuidUnique = new Set(infoPuuids);
+  const participantIds = match.info.participants.map((participant) => participant.participantId);
+  if (metadataUnique.size !== match.metadata.participants.length) context.addIssue({ code: "custom", path: ["metadata", "participants"], message: "metadata participants must be unique" });
+  if (infoPuuidUnique.size !== infoPuuids.length) context.addIssue({ code: "custom", path: ["info", "participants"], message: "participant PUUIDs must be unique" });
+  if (new Set(participantIds).size !== participantIds.length) context.addIssue({ code: "custom", path: ["info", "participants"], message: "participant IDs must be unique" });
   const metadataParticipants = [...match.metadata.participants].sort();
-  const infoParticipants = match.info.participants.map((participant) => participant.puuid).sort();
+  const infoParticipants = infoPuuids.sort();
   if (metadataParticipants.length !== infoParticipants.length || metadataParticipants.some((value, index) => value !== infoParticipants[index])) {
     context.addIssue({ code: "custom", path: ["metadata", "participants"], message: "metadata participants do not match info participants" });
   }
@@ -44,4 +51,3 @@ export const matchSchema = z.object({ metadata: metadataSchema, info: infoSchema
 export type MatchDto = z.infer<typeof matchSchema>;
 
 export const matchIdsSchema = z.array(matchIdSchema);
-

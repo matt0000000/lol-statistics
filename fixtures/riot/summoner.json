@@ -1,0 +1,9 @@
+{
+  "id": "fixture-summoner-master",
+  "accountId": "fixture-account-master",
+  "puuid": "fixture-player-master",
+  "name": "Fixture Summoner",
+  "profileIconId": 1,
+  "revisionDate": 1785000000000,
+  "summonerLevel": 100
+}

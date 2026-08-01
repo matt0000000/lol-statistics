@@ -39,9 +39,11 @@ export class MatchClient {
   }
 
   private validateListInput(input: MatchListInput): void {
-    if (typeof input.puuid !== "string" || input.puuid.length === 0 || !isSafeInteger(input.startTime) || !isSafeInteger(input.start)) throw invalidInput();
+    if (typeof input !== "object" || input === null) throw invalidInput();
+    const candidate = input as MatchListInput;
+    if (typeof candidate.puuid !== "string" || candidate.puuid.length === 0 || !isSafeInteger(candidate.startTime) || !isSafeInteger(candidate.start)) throw invalidInput();
     const now = this.now();
-    if (!isSafeInteger(now) || input.startTime > now || input.startTime < now - MAX_DISCOVERY_AGE_SECONDS) throw invalidInput();
+    if (!isSafeInteger(now) || candidate.startTime > now || candidate.startTime < now - MAX_DISCOVERY_AGE_SECONDS) throw invalidInput();
   }
 }
 

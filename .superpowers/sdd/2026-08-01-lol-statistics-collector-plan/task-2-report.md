@@ -38,4 +38,30 @@ PASS
 
 ## Remaining concerns
 
-No known blockers. The League contract intentionally requires the brief's `puuid` field even though some raw League-V4 production payload variants omit it; callers must provide/enrich that field before this boundary.
+No known blockers.
+
+## Fix Round 1: official League/Summoner boundary and identity invariants
+
+### RED
+
+Expanded tests were run before the implementation changes:
+
+```text
+bunx vitest run packages/riot-client/src/league.test.ts packages/riot-client/src/match.test.ts
+FAIL: 5 tests (no Summoner enrichment, duplicate identities accepted, and null input leaked a TypeError)
+```
+
+The original synthetic enriched League rows were replaced with official-shaped raw paged rows (`summonerId`, rank/points/wins/losses, queue/tier) and apex wrappers whose outer `tier`/`queue` are normalized onto nested entries. `LeagueClient` deduplicates by encrypted summoner ID before sequential Summoner-V4 enrichment, then deduplicates by PUUID again. Summoner 404s are skipped; other Riot failures propagate unchanged and remain redacted by the transport.
+
+Added `SummonerClient` and `summonerSchema` with encoded TR1 routes. Match validation now rejects duplicate metadata PUUIDs, duplicate participant PUUIDs, and duplicate participant IDs while retaining order-insensitive metadata/info equality. `listMatchIds` guards null/non-object runtime inputs.
+
+Fix-round verification:
+
+```text
+bunx vitest run packages/riot-client
+PASS: 3 files, 48 tests
+bun run typecheck
+PASS: all workspace packages
+git diff --check
+PASS
+```

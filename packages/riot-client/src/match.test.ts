@@ -85,8 +85,22 @@ describe("MatchClient", () => {
     expect(() => matchSchema.parse({ ...validMatch, metadata: { ...validMatch.metadata, participants: ["other"] } })).toThrow();
   });
 
+  it.each([
+    { metadata: { ...validMatch.metadata, participants: ["player-a", "player-a"] } },
+    { info: { ...validMatch.info, participants: [validMatch.info.participants[0], validMatch.info.participants[0]] } },
+    { info: { ...validMatch.info, participants: [{ ...validMatch.info.participants[0], participantId: 1 }, { ...validMatch.info.participants[1], participantId: 1 }] } },
+  ])("rejects duplicate participant identities at the boundary", (override) => {
+    expect(() => matchSchema.parse({ ...validMatch, ...override })).toThrow();
+  });
+
   it("accepts both ordinary and early-remake fixture payloads", () => {
     expect(matchSchema.parse(validFixture).info.gameDuration).toBe(1800);
     expect(matchSchema.parse(remakeFixture).info.gameDuration).toBe(90);
+  });
+
+  it("rejects null and non-object list inputs with a controlled error", async () => {
+    const client = new MatchClient(fakeRiotHttp([]), { now: () => 1_785_100_000 });
+    await expect(client.listMatchIds(null as never)).rejects.toThrow("invalid Riot client input");
+    await expect(client.listMatchIds(42 as never)).rejects.toThrow("invalid Riot client input");
   });
 });
