@@ -1,5 +1,5 @@
 {
-  "id": "e7a293af-691f-4a5c-b624-13f16024e344",
+  "id": "66efa300-a7a7-4fcb-9c19-b52433b48b3c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -502,6 +502,10 @@
         "combination_aggregates_size_valid": {
           "name": "combination_aggregates_size_valid",
           "value": "\"combination_aggregates\".\"size\" IN (2, 3)"
+        },
+        "combination_aggregates_counts_nonnegative": {
+          "name": "combination_aggregates_counts_nonnegative",
+          "value": "\"combination_aggregates\".\"wins\" >= 0 AND \"combination_aggregates\".\"losses\" >= 0 AND \"combination_aggregates\".\"sample\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -919,6 +923,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "patch_id": {
+          "name": "patch_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "item_id": {
           "name": "item_id",
           "type": "integer",
@@ -933,7 +943,40 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "participant_boots_match_id_participant_id_patch_id_participant_observations_match_id_participant_id_patch_id_fk": {
+          "name": "participant_boots_match_id_participant_id_patch_id_participant_observations_match_id_participant_id_patch_id_fk",
+          "tableFrom": "participant_boots",
+          "tableTo": "participant_observations",
+          "columnsFrom": [
+            "match_id",
+            "participant_id",
+            "patch_id"
+          ],
+          "columnsTo": [
+            "match_id",
+            "participant_id",
+            "patch_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "participant_boots_patch_id_item_id_items_patch_id_item_id_fk": {
+          "name": "participant_boots_patch_id_item_id_items_patch_id_item_id_fk",
+          "tableFrom": "participant_boots",
+          "tableTo": "items",
+          "columnsFrom": [
+            "patch_id",
+            "item_id"
+          ],
+          "columnsTo": [
+            "patch_id",
+            "item_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "participant_boots_match_id_participant_id_pk": {
           "name": "participant_boots_match_id_participant_id_pk",
@@ -964,6 +1007,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "patch_id": {
+          "name": "patch_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "slot_index": {
           "name": "slot_index",
           "type": "integer",
@@ -985,7 +1034,40 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "participant_core_items_match_id_participant_id_patch_id_participant_observations_match_id_participant_id_patch_id_fk": {
+          "name": "participant_core_items_match_id_participant_id_patch_id_participant_observations_match_id_participant_id_patch_id_fk",
+          "tableFrom": "participant_core_items",
+          "tableTo": "participant_observations",
+          "columnsFrom": [
+            "match_id",
+            "participant_id",
+            "patch_id"
+          ],
+          "columnsTo": [
+            "match_id",
+            "participant_id",
+            "patch_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "participant_core_items_patch_id_item_id_items_patch_id_item_id_fk": {
+          "name": "participant_core_items_patch_id_item_id_items_patch_id_item_id_fk",
+          "tableFrom": "participant_core_items",
+          "tableTo": "items",
+          "columnsFrom": [
+            "patch_id",
+            "item_id"
+          ],
+          "columnsTo": [
+            "patch_id",
+            "item_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "participant_core_items_match_id_participant_id_slot_index_pk": {
           "name": "participant_core_items_match_id_participant_id_slot_index_pk",
@@ -1002,6 +1084,10 @@
         "participant_core_items_slot_nonnegative": {
           "name": "participant_core_items_slot_nonnegative",
           "value": "\"participant_core_items\".\"slot_index\" >= 0"
+        },
+        "participant_core_items_quantity_positive": {
+          "name": "participant_core_items_quantity_positive",
+          "value": "\"participant_core_items\".\"quantity\" > 0"
         }
       },
       "isRLSEnabled": false
@@ -1152,7 +1238,17 @@
           ]
         }
       },
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "participant_observations_identity_patch_unique": {
+          "name": "participant_observations_identity_patch_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "match_id",
+            "participant_id",
+            "patch_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1206,7 +1302,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "patches_one_active_idx": {
+          "name": "patches_one_active_idx",
+          "columns": [
+            {
+              "expression": "is_active",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"patches\".\"is_active\" = true",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -1223,6 +1336,10 @@
         "patches_version_nonempty": {
           "name": "patches_version_nonempty",
           "value": "length(\"patches\".\"version\") > 0"
+        },
+        "patches_patch_key_format": {
+          "name": "patches_patch_key_format",
+          "value": "\"patches\".\"patch_key\" ~ '^[0-9]+\\.[0-9]+$'"
         }
       },
       "isRLSEnabled": false

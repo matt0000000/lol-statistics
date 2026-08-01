@@ -64,7 +64,8 @@ CREATE TABLE "combination_aggregates" (
 	"losses" integer DEFAULT 0 NOT NULL,
 	"sample" integer DEFAULT 0 NOT NULL,
 	CONSTRAINT "combination_aggregates_publication_id_champion_id_role_size_combination_key_pk" PRIMARY KEY("publication_id","champion_id","role","size","combination_key"),
-	CONSTRAINT "combination_aggregates_size_valid" CHECK ("combination_aggregates"."size" IN (2, 3))
+	CONSTRAINT "combination_aggregates_size_valid" CHECK ("combination_aggregates"."size" IN (2, 3)),
+	CONSTRAINT "combination_aggregates_counts_nonnegative" CHECK ("combination_aggregates"."wins" >= 0 AND "combination_aggregates"."losses" >= 0 AND "combination_aggregates"."sample" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "item_aggregates" (
@@ -120,6 +121,7 @@ CREATE TABLE "matches" (
 CREATE TABLE "participant_boots" (
 	"match_id" text NOT NULL,
 	"participant_id" integer NOT NULL,
+	"patch_id" integer NOT NULL,
 	"item_id" integer NOT NULL,
 	"slot_index" integer,
 	CONSTRAINT "participant_boots_match_id_participant_id_pk" PRIMARY KEY("match_id","participant_id")
@@ -128,11 +130,13 @@ CREATE TABLE "participant_boots" (
 CREATE TABLE "participant_core_items" (
 	"match_id" text NOT NULL,
 	"participant_id" integer NOT NULL,
+	"patch_id" integer NOT NULL,
 	"slot_index" integer NOT NULL,
 	"item_id" integer NOT NULL,
 	"quantity" integer DEFAULT 1 NOT NULL,
 	CONSTRAINT "participant_core_items_match_id_participant_id_slot_index_pk" PRIMARY KEY("match_id","participant_id","slot_index"),
-	CONSTRAINT "participant_core_items_slot_nonnegative" CHECK ("participant_core_items"."slot_index" >= 0)
+	CONSTRAINT "participant_core_items_slot_nonnegative" CHECK ("participant_core_items"."slot_index" >= 0),
+	CONSTRAINT "participant_core_items_quantity_positive" CHECK ("participant_core_items"."quantity" > 0)
 );
 --> statement-breakpoint
 CREATE TABLE "participant_observations" (
@@ -148,7 +152,8 @@ CREATE TABLE "participant_observations" (
 	"game_duration" integer NOT NULL,
 	"raw_final_slots" jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "participant_observations_match_id_participant_id_pk" PRIMARY KEY("match_id","participant_id")
+	CONSTRAINT "participant_observations_match_id_participant_id_pk" PRIMARY KEY("match_id","participant_id"),
+	CONSTRAINT "participant_observations_identity_patch_unique" UNIQUE("match_id","participant_id","patch_id")
 );
 --> statement-breakpoint
 CREATE TABLE "patches" (
@@ -160,7 +165,8 @@ CREATE TABLE "patches" (
 	"is_active" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "patches_version_unique" UNIQUE("version"),
-	CONSTRAINT "patches_version_nonempty" CHECK (length("patches"."version") > 0)
+	CONSTRAINT "patches_version_nonempty" CHECK (length("patches"."version") > 0),
+	CONSTRAINT "patches_patch_key_format" CHECK ("patches"."patch_key" ~ '^[0-9]+\.[0-9]+$')
 );
 --> statement-breakpoint
 ALTER TABLE "aggregate_publications" ADD CONSTRAINT "aggregate_publications_patch_id_patches_id_fk" FOREIGN KEY ("patch_id") REFERENCES "public"."patches"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -172,10 +178,15 @@ ALTER TABLE "item_aggregates" ADD CONSTRAINT "item_aggregates_publication_id_agg
 ALTER TABLE "items" ADD CONSTRAINT "items_patch_id_patches_id_fk" FOREIGN KEY ("patch_id") REFERENCES "public"."patches"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ladder_snapshots" ADD CONSTRAINT "ladder_snapshots_run_id_collection_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."collection_runs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "matches" ADD CONSTRAINT "matches_patch_id_patches_id_fk" FOREIGN KEY ("patch_id") REFERENCES "public"."patches"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "participant_boots" ADD CONSTRAINT "participant_boots_match_id_participant_id_patch_id_participant_observations_match_id_participant_id_patch_id_fk" FOREIGN KEY ("match_id","participant_id","patch_id") REFERENCES "public"."participant_observations"("match_id","participant_id","patch_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "participant_boots" ADD CONSTRAINT "participant_boots_patch_id_item_id_items_patch_id_item_id_fk" FOREIGN KEY ("patch_id","item_id") REFERENCES "public"."items"("patch_id","item_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "participant_core_items" ADD CONSTRAINT "participant_core_items_match_id_participant_id_patch_id_participant_observations_match_id_participant_id_patch_id_fk" FOREIGN KEY ("match_id","participant_id","patch_id") REFERENCES "public"."participant_observations"("match_id","participant_id","patch_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "participant_core_items" ADD CONSTRAINT "participant_core_items_patch_id_item_id_items_patch_id_item_id_fk" FOREIGN KEY ("patch_id","item_id") REFERENCES "public"."items"("patch_id","item_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "participant_observations" ADD CONSTRAINT "participant_observations_match_id_matches_match_id_fk" FOREIGN KEY ("match_id") REFERENCES "public"."matches"("match_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "participant_observations" ADD CONSTRAINT "participant_observations_patch_id_patches_id_fk" FOREIGN KEY ("patch_id") REFERENCES "public"."patches"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "aggregate_publications_one_active_idx" ON "aggregate_publications" USING btree ("is_active") WHERE "aggregate_publications"."is_active" = true;--> statement-breakpoint
 CREATE INDEX "collection_runs_status_started_at_idx" ON "collection_runs" USING btree ("status","started_at");--> statement-breakpoint
 CREATE INDEX "ladder_snapshots_run_tier_idx" ON "ladder_snapshots" USING btree ("run_id","tier");--> statement-breakpoint
 CREATE INDEX "matches_patch_validation_idx" ON "matches" USING btree ("patch_id","validation_state");--> statement-breakpoint
-CREATE INDEX "participant_observations_patch_champion_role_idx" ON "participant_observations" USING btree ("patch_id","champion_id","role");
+CREATE INDEX "participant_observations_patch_champion_role_idx" ON "participant_observations" USING btree ("patch_id","champion_id","role");--> statement-breakpoint
+CREATE UNIQUE INDEX "patches_one_active_idx" ON "patches" USING btree ("is_active") WHERE "patches"."is_active" = true;

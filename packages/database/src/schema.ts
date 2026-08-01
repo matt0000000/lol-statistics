@@ -1,9 +1,11 @@
 import { sql } from "drizzle-orm";
+import { ROLES, type PatchKey } from "@lol/domain";
 import {
   bigint,
   bigserial,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -21,7 +23,7 @@ import {
 
 export const runStatus = pgEnum("run_status", ["PENDING", "RUNNING", "COMPLETED", "FAILED"]);
 export const validationState = pgEnum("validation_state", ["PENDING", "VALID", "INVALID", "REJECTED"]);
-export const role = pgEnum("role", ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]);
+export const role = pgEnum("role", ROLES);
 export const tier = pgEnum("tier", ["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]);
 export const itemCategory = pgEnum("item_category", [
   "CORE",
@@ -40,13 +42,18 @@ export const patches = pgTable(
   {
     id: serial("id").primaryKey(),
     version: text("version").notNull(),
-    patchKey: text("patch_key").notNull(),
+    patchKey: text("patch_key").$type<PatchKey>().notNull(),
     activatedAt: timestamp("activated_at", { withTimezone: true, mode: "date" }),
     publishedAt: timestamp("published_at", { withTimezone: true, mode: "date" }),
     isActive: boolean("is_active").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [unique("patches_version_unique").on(table.version), check("patches_version_nonempty", sql`length(${table.version}) > 0`)]
+  (table) => [
+    unique("patches_version_unique").on(table.version),
+    uniqueIndex("patches_one_active_idx").on(table.isActive).where(sql`${table.isActive} = true`),
+    check("patches_version_nonempty", sql`length(${table.version}) > 0`),
+    check("patches_patch_key_format", sql`${table.patchKey} ~ '^[0-9]+\\.[0-9]+$'`)
+  ]
 );
 
 export const champions = pgTable(
@@ -144,7 +151,11 @@ export const participantObservations = pgTable(
     rawFinalSlots: jsonb("raw_final_slots").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.matchId, table.participantId] }), index("participant_observations_patch_champion_role_idx").on(table.patchId, table.championId, table.role)]
+  (table) => [
+    primaryKey({ columns: [table.matchId, table.participantId] }),
+    unique("participant_observations_identity_patch_unique").on(table.matchId, table.participantId, table.patchId),
+    index("participant_observations_patch_champion_role_idx").on(table.patchId, table.championId, table.role)
+  ]
 );
 
 export const participantCoreItems = pgTable(
@@ -152,11 +163,18 @@ export const participantCoreItems = pgTable(
   {
     matchId: text("match_id").notNull(),
     participantId: integer("participant_id").notNull(),
+    patchId: integer("patch_id").notNull(),
     slotIndex: integer("slot_index").notNull(),
     itemId: integer("item_id").notNull(),
     quantity: integer("quantity").notNull().default(1)
   },
-  (table) => [primaryKey({ columns: [table.matchId, table.participantId, table.slotIndex] }), check("participant_core_items_slot_nonnegative", sql`${table.slotIndex} >= 0`)]
+  (table) => [
+    primaryKey({ columns: [table.matchId, table.participantId, table.slotIndex] }),
+    foreignKey({ columns: [table.matchId, table.participantId, table.patchId], foreignColumns: [participantObservations.matchId, participantObservations.participantId, participantObservations.patchId] }),
+    foreignKey({ columns: [table.patchId, table.itemId], foreignColumns: [items.patchId, items.itemId] }),
+    check("participant_core_items_slot_nonnegative", sql`${table.slotIndex} >= 0`),
+    check("participant_core_items_quantity_positive", sql`${table.quantity} > 0`)
+  ]
 );
 
 export const participantBoots = pgTable(
@@ -164,10 +182,15 @@ export const participantBoots = pgTable(
   {
     matchId: text("match_id").notNull(),
     participantId: integer("participant_id").notNull(),
+    patchId: integer("patch_id").notNull(),
     itemId: integer("item_id").notNull(),
     slotIndex: integer("slot_index")
   },
-  (table) => [primaryKey({ columns: [table.matchId, table.participantId] })]
+  (table) => [
+    primaryKey({ columns: [table.matchId, table.participantId] }),
+    foreignKey({ columns: [table.matchId, table.participantId, table.patchId], foreignColumns: [participantObservations.matchId, participantObservations.participantId, participantObservations.patchId] }),
+    foreignKey({ columns: [table.patchId, table.itemId], foreignColumns: [items.patchId, items.itemId] })
+  ]
 );
 
 export const aggregatePublications = pgTable(
@@ -214,7 +237,11 @@ export const combinationAggregates = pgTable(
     losses: integer("losses").notNull().default(0),
     sample: integer("sample").notNull().default(0)
   },
-  (table) => [primaryKey({ columns: [table.publicationId, table.championId, table.role, table.size, table.combinationKey] }), check("combination_aggregates_size_valid", sql`${table.size} IN (2, 3)`)]
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.championId, table.role, table.size, table.combinationKey] }),
+    check("combination_aggregates_size_valid", sql`${table.size} IN (2, 3)`),
+    check("combination_aggregates_counts_nonnegative", sql`${table.wins} >= 0 AND ${table.losses} >= 0 AND ${table.sample} >= 0`)
+  ]
 );
 
 export const bootsAggregates = pgTable(
