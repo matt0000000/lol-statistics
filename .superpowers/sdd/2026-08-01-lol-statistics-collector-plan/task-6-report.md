@@ -199,3 +199,15 @@ Remediation verification:
 - `bun run typecheck` — PASS for all workspaces.
 - `git diff --check` — PASS.
 - `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts` — attempted; all 27 cases failed setup with `ECONNREFUSED 127.0.0.1:5432`. No PostgreSQL execution is claimed locally.
+
+## Lock-observation remediation
+
+- PostgreSQL waits are correlated to the exact test-controlled backend (`pid` and unique `application_name`). Advisory waits require `wait_event_type = 'Lock' AND wait_event = 'advisory'`; row-conflict waits require `wait_event_type = 'Lock' AND wait_event IN ('transactionid', 'tuple')`.
+- Flush and concurrent publication operations use separate branded, single-connection databases. Polling is a finite awaited deadline with a database `statement_timeout`; no detached timeout race remains. Cleanup unlocks the barrier, awaits every operation promise, and closes every dedicated client in nested `finally` blocks.
+- `createDatabase` accepts an optional pool size so these tests can enforce one backend per operation while retaining the existing default for production callers.
+
+Lock-observation verification:
+
+- Focused unit/integration-gated command without `TEST_DATABASE_URL`: PASS (14 unit tests; 27 PostgreSQL tests skipped).
+- `bun run typecheck`, `bunx drizzle-kit check`, `bun run db:generate`, and `git diff --check`: PASS.
+- `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts`: attempted; all 27 configured PostgreSQL tests failed setup with `ECONNREFUSED 127.0.0.1:5432`. No gated PostgreSQL execution is claimed locally.

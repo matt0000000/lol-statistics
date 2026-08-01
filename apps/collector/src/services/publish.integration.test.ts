@@ -2,32 +2,58 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, createMigratedTestDatabase, aggregatePublications, baselineAggregates, bootsAggregates, combinationAggregates, collectionRuns, itemAggregates, items, matches, participantCoreItems, participantObservations, patches, AggregatesRepository } from "@lol/database";
 import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
+import { randomUUID } from "node:crypto";
 import { publishAtomically } from "./publish";
 
 const url = process.env.TEST_DATABASE_URL;
 const ACTIVATION_ADVISORY_KEY = 2_147_400_001;
 const BARRIER_TIMEOUT_MS = 3_000;
 
-async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = BARRIER_TIMEOUT_MS): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs); })
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+type BackendIdentity = { pid: number; applicationName: string };
+
+function namedUrl(base: string, suffix: string): string {
+  const parsed = new URL(base);
+  parsed.searchParams.set("application_name", `lol_task6_${suffix}_${randomUUID().replaceAll("-", "")}`);
+  return parsed.toString();
 }
 
-async function waitForLock(client: ReturnType<typeof postgres>, predicate: (rows: any[]) => boolean, label: string): Promise<void> {
-  await withTimeout((async () => {
-    for (;;) {
-      const rows = await client.unsafe(`SELECT pid, wait_event_type, wait_event, query FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`);
-      if (predicate(rows as any[])) return;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-  })(), label);
+async function backendIdentity(client: ReturnType<typeof postgres>): Promise<BackendIdentity> {
+  const rows = await client`SELECT pg_backend_pid() AS pid, current_setting('application_name') AS application_name`;
+  const row = rows[0] as { pid: number; application_name: string } | undefined;
+  if (!row) throw new Error("backend identity query returned no rows");
+  return { pid: Number(row.pid), applicationName: row.application_name };
+}
+
+async function databaseIdentity(database: ReturnType<typeof createDatabase>): Promise<BackendIdentity> {
+  const rows = await database.db.execute(sql`SELECT pg_backend_pid() AS pid, current_setting('application_name') AS application_name`);
+  const row = rows[0] as { pid: number; application_name: string } | undefined;
+  if (!row) throw new Error("database backend identity query returned no rows");
+  return { pid: Number(row.pid), applicationName: row.application_name };
+}
+
+type LockExpectation = {
+  identity: BackendIdentity;
+  waitEvent: "advisory" | "transactionid" | "tuple" | readonly ["transactionid", "tuple"];
+  queryFragment: string;
+};
+
+async function waitForLock(client: ReturnType<typeof postgres>, expected: LockExpectation, label: string): Promise<void> {
+  const deadline = Date.now() + BARRIER_TIMEOUT_MS;
+  await client`SET statement_timeout = ${BARRIER_TIMEOUT_MS}`;
+  while (Date.now() < deadline) {
+    const rows = await client`
+      SELECT pid, application_name, wait_event_type, wait_event, query
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND pid = ${expected.identity.pid}
+        AND application_name = ${expected.identity.applicationName}
+    `;
+    const waitEvents = Array.isArray(expected.waitEvent) ? expected.waitEvent : [expected.waitEvent];
+    const observed = rows.some((row) => row.wait_event_type === "Lock" && waitEvents.includes(row.wait_event) && String(row.query).includes(expected.queryFragment));
+    if (observed) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`${label} timed out`);
 }
 
 describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
@@ -38,7 +64,7 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
   let barrierClient: ReturnType<typeof postgres>;
   beforeEach(async () => {
     database = await createMigratedTestDatabase(url!);
-    barrierClient = postgres(database.url, { max: 1 });
+    barrierClient = postgres(namedUrl(database.url, "barrier"), { max: 1 });
     await barrierClient.unsafe("CREATE TABLE publication_test_control (id boolean PRIMARY KEY DEFAULT true, pause_activation boolean NOT NULL DEFAULT false, fail_activation boolean NOT NULL DEFAULT false)");
     await barrierClient.unsafe("INSERT INTO publication_test_control DEFAULT VALUES");
     await barrierClient.unsafe("CREATE FUNCTION publication_test_activation_guard() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE control publication_test_control%ROWTYPE; BEGIN SELECT * INTO control FROM publication_test_control WHERE id = true; IF NEW.is_active AND control.fail_activation THEN RAISE EXCEPTION 'test activation failure'; END IF; IF NEW.is_active AND control.pause_activation THEN PERFORM pg_advisory_lock(2147400001); END IF; RETURN NEW; END; $$");
@@ -54,7 +80,7 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     runId = run!.id;
     const [publication] = await database.db.insert(aggregatePublications).values({ patchId: patch!.id, runId, coverageStartedAt: new Date() }).returning({ id: aggregatePublications.id });
     publicationId = publication!.id;
-    productionDatabase = createDatabase(database.url);
+    productionDatabase = createDatabase(namedUrl(database.url, "setup"), { max: 1 });
   });
   afterEach(async () => {
     if (barrierClient) await barrierClient.end();
@@ -169,18 +195,36 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
   it("serializes a flush already waiting on the target lock against activation", async () => {
     await setControl(true);
     await barrierClient`SELECT pg_advisory_lock(${ACTIVATION_ADVISORY_KEY})`;
-    const repository = new AggregatesRepository(database.db);
-    await repository.preparePublication({ publicationId, runId, patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId });
-    const activation = publishAtomically({ publicationId, runId, database: productionDatabase });
+    const activationDatabase = createDatabase(namedUrl(database.url, "activation"), { max: 1 });
+    const flushDatabase = createDatabase(namedUrl(database.url, "flush"), { max: 1 });
+    let activationIdentity!: BackendIdentity;
+    let flushIdentity!: BackendIdentity;
+    const repository = new AggregatesRepository(flushDatabase.db);
+    let activation: Promise<unknown> | undefined;
     let flush: Promise<unknown> | undefined;
     let outcomes: PromiseSettledResult<unknown>[] | undefined;
     try {
-      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "AdvisoryLock" && String(row.query).includes("aggregate_publications")), "activation lock barrier");
+      activationIdentity = await databaseIdentity(activationDatabase);
+      flushIdentity = await databaseIdentity(flushDatabase);
+      await repository.preparePublication({ publicationId, runId, patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId });
+      activation = publishAtomically({ publicationId, runId, database: activationDatabase });
+      await waitForLock(barrierClient, { identity: activationIdentity, waitEvent: "advisory", queryFragment: "aggregate_publications" }, "activation lock barrier");
       flush = repository.flushGroup({ championId: 1, role: "TOP", baseline: { wins: 1, losses: 0, sample: 1 }, items: new Map(), pairs: new Map(), trios: new Map(), boots: new Map() });
-      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "Lock" && String(row.query).includes("aggregate_publications")), "flush ownership-lock attempt");
+      await waitForLock(barrierClient, { identity: flushIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "flush ownership-lock attempt");
     } finally {
-      await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;
-      outcomes = await withTimeout(Promise.allSettled([activation, ...(flush ? [flush] : [])]), "flush barrier cleanup");
+      try {
+        await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;
+      } finally {
+        try {
+          outcomes = await Promise.allSettled([...(activation ? [activation] : []), ...(flush ? [flush] : [])]);
+        } finally {
+          try {
+            await activationDatabase.close();
+          } finally {
+            await flushDatabase.close();
+          }
+        }
+      }
     }
     expect(outcomes[0]?.status).toBe("fulfilled");
     expect(outcomes[1]?.status).toBe("rejected");
@@ -197,16 +241,34 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     const [otherPublication] = await database.db.insert(aggregatePublications).values({ patchId: patchRow.patchId, runId: otherRun!.id, coverageStartedAt: new Date() }).returning({ id: aggregatePublications.id });
     await setControl(true);
     await barrierClient`SELECT pg_advisory_lock(${ACTIVATION_ADVISORY_KEY})`;
-    const first = publishAtomically({ publicationId, runId, database: productionDatabase });
+    const firstDatabase = createDatabase(namedUrl(database.url, "first-publish"), { max: 1 });
+    const secondDatabase = createDatabase(namedUrl(database.url, "second-publish"), { max: 1 });
+    let firstIdentity!: BackendIdentity;
+    let secondIdentity!: BackendIdentity;
+    let first: Promise<unknown> | undefined;
     let second: Promise<unknown> | undefined;
     let outcomes: PromiseSettledResult<unknown>[] | undefined;
     try {
-      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "AdvisoryLock" && String(row.query).includes("aggregate_publications")), "first publication entry");
-      second = publishAtomically({ publicationId: otherPublication!.id, runId: otherRun!.id, database: productionDatabase });
-      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "Lock" && String(row.query).includes("aggregate_publications")), "second publication lock overlap");
+      firstIdentity = await databaseIdentity(firstDatabase);
+      secondIdentity = await databaseIdentity(secondDatabase);
+      first = publishAtomically({ publicationId, runId, database: firstDatabase });
+      await waitForLock(barrierClient, { identity: firstIdentity, waitEvent: "advisory", queryFragment: "aggregate_publications" }, "first publication entry");
+      second = publishAtomically({ publicationId: otherPublication!.id, runId: otherRun!.id, database: secondDatabase });
+      await waitForLock(barrierClient, { identity: secondIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "second publication lock overlap");
     } finally {
-      await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;
-      outcomes = await withTimeout(Promise.allSettled([first, ...(second ? [second] : [])]), "publication barrier cleanup");
+      try {
+        await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;
+      } finally {
+        try {
+          outcomes = await Promise.allSettled([...(first ? [first] : []), ...(second ? [second] : [])]);
+        } finally {
+          try {
+            await firstDatabase.close();
+          } finally {
+            await secondDatabase.close();
+          }
+        }
+      }
     }
     expect(outcomes[0]?.status).toBe("fulfilled");
     expect(outcomes[1]?.status).toBe("rejected");
