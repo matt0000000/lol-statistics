@@ -9,3 +9,10 @@ coverage/
 playwright-report/
 test-results/
 dist/
+
+# Generated workspace and build metadata
+*.tsbuildinfo
+.turbo/
+.vercel/
+bun-debug.log*
+bun-error.log*
