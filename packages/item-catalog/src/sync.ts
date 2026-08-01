@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { toPatchKey } from "@lol/domain";
 import { createDatabase, champions as championsTable, items as itemsTable, patches } from "@lol/database";
 import { DataDragonClient } from "./client";
