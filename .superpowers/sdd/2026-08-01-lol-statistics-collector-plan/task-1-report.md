@@ -10,6 +10,21 @@ Implemented the typed Riot HTTP client with a per-instance rate-limit gate, dete
 - `bun run typecheck` — all workspace packages passed.
 - `git diff --check` — passed.
 
+## Fix Round 3
+
+URL normalization hardening and regressions are in commit `113ee5280ae9771e7affef576b8fa4cee6ffdee0`.
+
+- Bounded multi-level percent decoding rejects double-encoded separators, traversal dots, encoded backslashes, malformed escapes, and control/fragment delimiters before URL construction.
+- Full pathname-plus-search canonical equality rejects rewritten raw queries while preserving canonical Riot query strings and encoded identifiers.
+- Riot host validation now enforces DNS label grammar, suffix boundaries, label lengths, and case-insensitive uppercase equivalents; ports, credentials, empty, and edge-hyphen labels fail safely.
+
+Fix Round 3 verification:
+
+- `bunx vitest run packages/riot-client` — 29 passed.
+- `bunx vitest run` — 9 files passed, 2 skipped; 88 passed, 6 skipped.
+- `bun run typecheck` — all workspace packages passed.
+- `git diff --check` — passed.
+
 ## Fix Round 2
 
 Implementation and regression tests are in commit `6998d3f9bee9484eb1ec58837328302f53490ea9`.
