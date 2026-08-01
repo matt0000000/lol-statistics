@@ -26,13 +26,13 @@ export const tier = pgEnum("tier", ["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER
 export const itemCategory = pgEnum("item_category", [
   "CORE",
   "BOOTS",
-  "STARTER",
-  "CONSUMABLE",
-  "TRINKET",
-  "QUEST",
-  "SUPPORT",
-  "MODE",
-  "UNKNOWN"
+  "EXCLUDED_COMPONENT",
+  "EXCLUDED_STARTER",
+  "EXCLUDED_CONSUMABLE",
+  "EXCLUDED_TRINKET",
+  "EXCLUDED_SUPPORT",
+  "EXCLUDED_MODE",
+  "EXCLUDED_UNKNOWN"
 ]);
 
 export const patches = pgTable(
@@ -68,8 +68,9 @@ export const items = pgTable(
   {
     patchId: integer("patch_id").notNull().references(() => patches.id),
     itemId: integer("item_id").notNull(),
-    baseItemId: integer("base_item_id").notNull(),
+    normalizedBaseId: integer("normalized_base_id").notNull(),
     category: itemCategory("category").notNull(),
+    classificationReason: text("classification_reason").notNull(),
     name: text("name").notNull(),
     price: integer("price").notNull(),
     iconUrl: text("icon_url").notNull(),
