@@ -46,7 +46,9 @@ export async function healthCommand(options: HealthOptions = {}): Promise<number
     const [currentPatch] = await database.db.select({ id: patches.id, patchKey: patches.patchKey }).from(patches).where(eq(patches.isActive, true)).limit(1);
     const [candidatePublication] = await database.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).limit(1);
     const activePublication = candidatePublication && currentPatch && candidatePublication.patchId === currentPatch.id ? candidatePublication : undefined;
-    const [run] = await database.db.select().from(collectionRuns).where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED", "COMPLETED"])).orderBy(desc(collectionRuns.updatedAt)).limit(1);
+    const [run] = currentPatch
+      ? await database.db.select().from(collectionRuns).where(and(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED", "COMPLETED"]), eq(collectionRuns.patchId, currentPatch.id))).orderBy(desc(collectionRuns.updatedAt)).limit(1)
+      : [];
     const unknownRows = run ? await database.db.select({ participantId: participantRejections.participantId }).from(participantRejections).where(and(eq(participantRejections.patchId, run.patchId ?? -1), eq(participantRejections.reason, "unknown_item"))) : [];
     const snapshot = deriveHealthSnapshot({ currentPatch, activePublication, run, unknownItemCount: unknownRows.length });
     write(options.json ? `${JSON.stringify(snapshot)}\n` : formatHealth(snapshot));

@@ -34,6 +34,7 @@ describe.skipIf(!url)("catalog synchronization", () => {
     const patchId = patchRows[0]!.id;
     const [run] = await database.db.insert(collectionRuns).values({ patchId, status: "RUNNING", stage: "aggregates" }).returning();
     const [publication] = await database.db.insert(aggregatePublications).values({ patchId, runId: run!.id, coverageStartedAt: new Date(), isActive: true }).returning();
+    await database.db.update(patches).set({ activePublicationId: publication!.id, publishedAt: new Date("2026-08-01T00:00:00Z") }).where(eq(patches.id, patchId));
     expect(await database.db.select().from(champions).where(eq(champions.patchId, patchId))).toHaveLength(first.champions);
     const storedItems = await database.db.select().from(items).where(eq(items.patchId, patchId));
     expect(storedItems).toHaveLength(first.items);
@@ -59,6 +60,7 @@ describe.skipIf(!url)("catalog synchronization", () => {
     const shrunk = { ...catalog, champions: {}, items: itemCatalog.filter((item) => item.id !== 6672) };
     const shrunkResult = await syncCatalog(database, shrunk);
     expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publication!.id)))[0]?.isActive).toBe(true);
+    expect((await database.db.select({ activePublicationId: patches.activePublicationId, publishedAt: patches.publishedAt }).from(patches).where(eq(patches.id, patchId)))[0]).toMatchObject({ activePublicationId: publication!.id, publishedAt: expect.any(Date) });
     expect(shrunkResult).toEqual({ patchId, champions: 0, items: first.items - 1 });
     expect(await database.db.select().from(champions).where(eq(champions.patchId, patchId))).toHaveLength(0);
     const shrunkItems = await database.db.select().from(items).where(eq(items.patchId, patchId));
@@ -77,6 +79,7 @@ describe.skipIf(!url)("catalog synchronization", () => {
     expect(nextPatchRows.find((patch) => patch.version === "16.15.1")?.isActive).toBe(false);
     expect(nextPatchRows.find((patch) => patch.version === "16.16.1")?.isActive).toBe(true);
     expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publication!.id)))[0]?.isActive).toBe(false);
+    expect(nextPatchRows.find((patch) => patch.version === "16.15.1")).toMatchObject({ activePublicationId: null, publishedAt: null });
     expect(nextPatchRows.find((patch) => patch.version === "16.16.1")).toMatchObject({ activePublicationId: null, publishedAt: null });
     expect(await database.db.select().from(champions).where(eq(champions.patchId, next.patchId))).toHaveLength(next.champions);
     expect(await database.db.select().from(items).where(eq(items.patchId, next.patchId))).toHaveLength(next.items);

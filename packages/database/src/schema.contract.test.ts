@@ -6,6 +6,7 @@ const migrationFiles = readdirSync(new URL("../../../migrations", import.meta.ur
 const migration = migrationFiles
   .map((file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), "utf8"))
   .join("\n");
+const migrationMetadata = readFileSync(new URL("../../../migrations/meta/0008_snapshot.json", import.meta.url), "utf8");
 
 describe("canonical schema integrity contract", () => {
   it("consumes domain patch and role contracts", () => {
@@ -67,5 +68,10 @@ describe("canonical schema integrity contract", () => {
     expect(source).toContain("discoveredMatchStatus");
     expect(migration).toContain("aggregate_publications_one_per_run_idx");
     expect(migration).toContain("discovered_matches_unavailable_reason_safe");
+    expect(migration).toContain("active_publication_id");
+    expect(migration).toContain("ORDER BY ap.created_at, ap.id");
+    expect(migration).toContain("active_publication_id = NULL");
+    expect(migrationMetadata).toContain("\"active_publication_id\"");
+    expect(readFileSync(new URL("../../../migrations/meta/_journal.json", import.meta.url), "utf8")).toContain("0008_ambitious_hitman");
   });
 });

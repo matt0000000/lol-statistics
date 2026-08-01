@@ -83,10 +83,10 @@ export class AggregatesRepository {
   /** Lock every canonical row participating in publication verification. */
   async lockAndLoad(tx: Tx, publicationId: string, runId: string): Promise<any> {
     const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+    await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
     const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
     const patchId = publication?.patchId;
     const patch = patchId ? (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0] : undefined;
-    await tx.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
     const [baseline, itemRows, combinations, boots] = await Promise.all([
       tx.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, publicationId)).for("update"),
       tx.select().from(itemAggregates).where(eq(itemAggregates.publicationId, publicationId)).for("update"),

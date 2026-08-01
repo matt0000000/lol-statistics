@@ -23,4 +23,20 @@ describe("collector health", () => {
   it("reports ready only when the active publication belongs to current patch", () => {
     expect(deriveHealthSnapshot({ currentPatch: { id: 2, patchKey: "16.16" }, activePublication: { id: "new", patchId: 2, collectedAt: "2026-08-02T00:00:00Z" }, run: { status: "COMPLETED", stage: "publish" } })).toMatchObject({ status: "COMPLETED", datasetState: "ready", dataAge: "2026-08-02T00:00:00.000Z" });
   });
+
+  it("does not expose stale old-patch run state while the current patch has no run", () => {
+    expect(deriveHealthSnapshot({
+      currentPatch: { id: 2, patchKey: "16.16" },
+      activePublication: { id: "old", patchId: 1, collectedAt: new Date("2026-08-01T00:00:00Z") },
+      run: null
+    })).toMatchObject({
+      status: "dataset_warming",
+      datasetState: "dataset_warming",
+      runStatus: "IDLE",
+      stage: "catalog",
+      dataAge: null,
+      counters: { matchesDiscovered: 0, matchesIngested: 0, observationsAccepted: 0, observationsRejected: 0 },
+      errorCategory: null
+    });
+  });
 });

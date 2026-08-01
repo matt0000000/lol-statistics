@@ -15,6 +15,12 @@ export type DataDragonCatalog = Awaited<ReturnType<DataDragonClient["fetchTrCata
 
 type Transaction = any;
 
+export const PATCH_ROLLOVER_LOCK_ORDER = ["active_publications", "patches"] as const;
+
+export function patchPublicationTransition(samePatchRefresh: boolean): { activePublicationId?: string | null; publishedAt?: Date | null } {
+  return samePatchRefresh ? {} : { activePublicationId: null, publishedAt: null };
+}
+
 export async function syncCatalog(
   database: Database,
   catalog: DataDragonCatalog
@@ -37,13 +43,15 @@ export async function syncCatalog(
 
 export async function upsertPatch(transaction: Transaction, version: string): Promise<number> {
   const patchKey = toPatchKey(version);
+  // Match publication activation's target-first lock order: the global active
+  // publication rows are locked before any patch rows during rollover.
+  await transaction.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
   const prior = (await transaction.select().from(patches).where(eq(patches.isActive, true)).for("update").limit(1))[0];
   const existing = (await transaction.select().from(patches).where(eq(patches.version, version)).for("update").limit(1))[0];
   const samePatchRefresh = Boolean(prior && existing && prior.id === existing.id);
   if (!samePatchRefresh) {
-    await transaction.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
     await transaction.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true));
-    await transaction.update(patches).set({ isActive: false, activatedAt: null }).where(eq(patches.isActive, true));
+    await transaction.update(patches).set({ isActive: false, activatedAt: null, ...patchPublicationTransition(false) }).where(eq(patches.isActive, true));
   }
 
   const [patch] = await transaction
@@ -53,7 +61,7 @@ export async function upsertPatch(transaction: Transaction, version: string): Pr
       target: patches.version,
       set: samePatchRefresh
         ? { patchKey, isActive: true }
-        : { patchKey, isActive: true, activatedAt: new Date(), activePublicationId: null, publishedAt: null }
+        : { patchKey, isActive: true, activatedAt: new Date(), ...patchPublicationTransition(false) }
     })
     .returning({ id: patches.id });
   if (!patch) throw new Error("Failed to upsert patch");

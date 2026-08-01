@@ -17,6 +17,10 @@ import { runCollection, exitCodeForError, type PipelineDependencies } from "../p
 
 export type CollectOptions = { argv?: string[]; env?: Record<string, string | undefined>; write?: (line: string) => void; dependencies?: PipelineDependencies; database?: ReturnType<typeof createDatabase> };
 
+export function isUnavailableMatchError(error: unknown): error is RiotHttpError {
+  return error instanceof RiotHttpError && error.status === 404 && error.category === "not_found";
+}
+
 /** Build the real production workers. Every stage is backed by Riot clients and repositories. */
 export async function collectCommand(options: CollectOptions = {}): Promise<number> {
   const env = options.env ?? process.env;
@@ -89,7 +93,7 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
               const match = await matchClient.getMatch(matchId);
               await ingestMatch({ runId: run.id, patchId: run.patchId, activePatch: patch.patchKey, match, eligiblePlayers: eligible, catalog, observations: observationsRepo, logger });
             } catch (error) {
-              if (error instanceof RiotHttpError && error.category === "not_found") {
+              if (isUnavailableMatchError(error)) {
                 if (!discoveryRepo.markUnavailable) throw Object.assign(new Error("discovery repository cannot checkpoint unavailable matches"), { invariant: true });
                 await discoveryRepo.markUnavailable(run.id, matchId);
                 continue;

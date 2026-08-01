@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { publishAtomically, verifyPublicationSnapshot, type PublishSnapshot } from "./publish";
+import { PUBLISH_LOCK_ORDER, publishAtomically, verifyPublicationSnapshot, type PublishSnapshot } from "./publish";
 
 const base = (overrides: Partial<PublishSnapshot> = {}): PublishSnapshot => ({
   publicationId: "00000000-0000-4000-8000-000000000001", runId: "00000000-0000-4000-8000-000000000002", patchId: 1,
@@ -33,6 +33,10 @@ const lowSampleSnapshot = (): PublishSnapshot => base({
 });
 
 describe("publication verification", () => {
+  it("uses the same target-first then global-publication-before-patch lock order as rollover", () => {
+    expect(PUBLISH_LOCK_ORDER).toEqual(["target_publication", "active_publications", "run", "patch"]);
+  });
+
   it("reports deterministic count equation and missing baseline failures", async () => {
     const result = await verifyPublicationSnapshot(base({ baseline: [], items: [{ championId: 1, role: "TOP", itemId: 3031, wins: 2, losses: 0, sample: 1 }] }));
     expect(result.valid).toBe(false);

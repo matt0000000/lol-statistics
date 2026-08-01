@@ -9,6 +9,8 @@ export class PublicationInvariantError extends Error {
   constructor(failures: InvariantFailure[]) { super("publication invariants failed"); this.name = "PublicationInvariantError"; this.failures = failures; }
 }
 
+export const PUBLISH_LOCK_ORDER = ["target_publication", "active_publications", "run", "patch"] as const;
+
 /** Internal canonical state loaded under transaction locks. Not an input accepted by publishAtomically. */
 export type PublishSnapshot = {
   publicationId: string;
@@ -166,10 +168,12 @@ export async function publishAtomically(input: CanonicalPublishInput): Promise<v
 
 async function lockAndLoadCanonical(tx: any, publicationId: string, runId: string): Promise<PublishSnapshot> {
   const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+  // Keep publication-target ordering consistent with activation and catalog
+  // rollover: target publication, global active publications, then run/patch.
+  await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
   const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
   const patchId = publication?.patchId;
   const patch = patchId ? (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0] : undefined;
-  await tx.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
   const [baseline, itemRows, combinations, boots] = await Promise.all([
     tx.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, publicationId)).for("update"),
     tx.select().from(itemAggregates).where(eq(itemAggregates.publicationId, publicationId)).for("update"),
