@@ -18,7 +18,10 @@ export function classifyItem(
   overrides: Record<number, ItemCategory>
 ): ItemClassification {
   const forced = overrides[Number(item.id)];
-  if (forced) return { category: forced, reason: "patch override" };
+  if (forced) {
+    const reason = forced === "BOOTS" ? "patch override: upgraded boots" : "patch override";
+    return { category: forced, reason };
+  }
   if (item.maps?.["11"] !== true) {
     return { category: "EXCLUDED_MODE", reason: "not enabled on map 11" };
   }

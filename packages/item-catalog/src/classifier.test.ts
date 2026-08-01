@@ -30,4 +30,12 @@ describe("classifyItem", () => {
     const completedBoots = { ...items.data["3006"], id: 3006, into: ["3172"], from: ["1001"] };
     expect(classifyItem(completedBoots, {})).toMatchObject({ category: "BOOTS" });
   });
+
+  it("classifies the 16.15 upgraded boots fixture separately from core items", () => {
+    const upgradedBoots = { ...items.data["3172"], id: 3172 };
+    expect(classifyItem(upgradedBoots, { 3172: "BOOTS" })).toMatchObject({
+      category: "BOOTS",
+      reason: "patch override: upgraded boots"
+    });
+  });
 });

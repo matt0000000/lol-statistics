@@ -9,7 +9,7 @@ import itemAliasesFixture from "../../../fixtures/riot/item-aliases-16.15.1.json
 describe("DataDragonClient", () => {
   it("uses the TR realm version for both catalogs", async () => {
     const fetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })));
     const client = new DataDragonClient(fetcher);
@@ -17,14 +17,14 @@ describe("DataDragonClient", () => {
     expect(result.version).toBe("16.15.1");
     expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
       "https://ddragon.leagueoflegends.com/realms/tr.json",
-      "https://cdn/16.15.1/data/tr_TR/champion.json",
-      "https://cdn/16.15.1/data/tr_TR/item.json"
+      "https://ddragon.leagueoflegends.com/cdn/16.15.1/data/tr_TR/champion.json",
+      "https://ddragon.leagueoflegends.com/cdn/16.15.1/data/tr_TR/item.json"
     ]);
   });
 
   it("parses stable champion keys and enriches item keys as numbers", async () => {
     const fetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         data: { Aatrox: { id: "Aatrox", key: "266", name: "Aatrox", image: { full: "Aatrox.png" } } }
       })))
@@ -51,7 +51,7 @@ describe("DataDragonClient", () => {
 
   it("rejects a catalog record whose key is not a numeric item id", async () => {
     const fetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { invalid: {
         name: "Invalid", description: "", gold: { base: 0, total: 0, sell: 0, purchasable: false },
@@ -62,7 +62,7 @@ describe("DataDragonClient", () => {
   });
 
   it("validates fixture boundaries", () => {
-    expect(loadRealmFixture({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" }).dd).toBe("16.15.1");
+    expect(loadRealmFixture({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" }).dd).toBe("16.15.1");
     expect(loadChampionFixture({ data: { A: { id: "A", key: "1", name: "A", image: { full: "A.png" } } } }).data.A.key).toBe(1);
     expect(() => loadItemFixture({ data: { bad: { name: "missing fields" } } })).toThrow();
     expect(() => loadChampionFixture({ data: { A: { id: "A", key: "9007199254740993", name: "A", image: { full: "A.png" } } } })).toThrow();
@@ -78,11 +78,34 @@ describe("DataDragonClient", () => {
     expect(items["220000"].maps["11"]).toBe(false);
   });
 
+  it("attaches only the versioned aliases for the active TR patch", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })));
+    await expect(new DataDragonClient(fetcher).fetchTrCatalog()).resolves.toMatchObject({ aliases: { 7002: 3031 } });
+
+    const unknownFetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.16.1", dd: "16.16.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })));
+    await expect(new DataDragonClient(unknownFetcher).fetchTrCatalog()).resolves.toMatchObject({ aliases: {} });
+  });
+
+  it.each([
+    "http://ddragon.leagueoflegends.com",
+    "https://evil.example"
+  ])("rejects a non-official realm CDN (%s)", async (cdn) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn })));
+    await expect(new DataDragonClient(fetcher).fetchTrCatalog()).rejects.toThrow("official Data Dragon CDN");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["1e3", "0x10", "+1", " 1"]) (
     "rejects a non-canonical item record key (%s)",
     async (key) => {
       const fetcher = vi.fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: { [key]: {
           name: "Invalid", description: "", gold: { base: 0, total: 0, sell: 0, purchasable: false },
@@ -97,7 +120,7 @@ describe("DataDragonClient", () => {
     "rejects a leading-zero item record key (%s)",
     async (key) => {
       const fetcher = vi.fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: { [key]: {
           name: "Invalid", description: "", gold: { base: 0, total: 0, sell: 0, purchasable: false },
@@ -114,13 +137,13 @@ describe("DataDragonClient", () => {
       into: [], from: [], tags: [], maps: { "11": true }, purchasable: false, image: { full: "invalid.png" }
     };
     const collidingFetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { "1": item, "01": item } })));
     await expect(new DataDragonClient(collidingFetcher).fetchTrCatalog()).rejects.toThrow();
 
     const unsafeFetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { "9007199254740993": item } })));
     await expect(new DataDragonClient(unsafeFetcher).fetchTrCatalog()).rejects.toThrow();

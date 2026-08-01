@@ -9,7 +9,10 @@ const SUPPORT_QUEST_IDS: readonly number[] = [
 ];
 
 const PATCH_OVERRIDES: Record<string, Record<number, ItemCategory>> = {
-  "16.15": Object.fromEntries(SUPPORT_QUEST_IDS.map((id) => [id, "EXCLUDED_SUPPORT"]))
+  "16.15": {
+    ...Object.fromEntries(SUPPORT_QUEST_IDS.map((id) => [id, "EXCLUDED_SUPPORT"])),
+    3172: "BOOTS"
+  }
 };
 
 export function overridesFor(version: string): Record<number, ItemCategory> {

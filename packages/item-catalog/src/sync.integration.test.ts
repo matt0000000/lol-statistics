@@ -38,6 +38,10 @@ describe.skipIf(!url)("catalog synchronization", () => {
       category: "BOOTS",
       classificationReason: "completed boots"
     });
+    expect(storedItems.find((item) => item.itemId === 3172)).toMatchObject({
+      category: "BOOTS",
+      classificationReason: "patch override: upgraded boots"
+    });
     expect(storedItems.find((item) => item.itemId === 1038)).toMatchObject({
       category: "EXCLUDED_COMPONENT",
       classificationReason: "builds into another item"

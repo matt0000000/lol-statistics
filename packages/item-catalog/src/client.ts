@@ -8,6 +8,7 @@ import {
   type ChampionDto,
   type ItemDto
 } from "./contracts";
+import { aliasesFor } from "./aliases";
 
 const TR_REALM_URL = "https://ddragon.leagueoflegends.com/realms/tr.json";
 
@@ -19,12 +20,17 @@ export class DataDragonClient {
     locale: string;
     champions: Record<string, ChampionDto>;
     items: ItemDto[];
+    aliases: Record<number, number>;
   }> {
     const realm = parseRealm(await this.getJson(TR_REALM_URL));
     // Validate that the realm version has the major/minor shape used by the
     // domain before constructing versioned catalog URLs.
     toPatchKey(realm.dd);
-    const base = `${realm.cdn}/${realm.dd}/data/${realm.l}`;
+    const cdn = new URL(realm.cdn);
+    if (cdn.protocol !== "https:" || cdn.hostname !== "ddragon.leagueoflegends.com") {
+      throw new Error("Only the official Data Dragon CDN is allowed");
+    }
+    const base = `${cdn.toString().replace(/\/$/, "")}/${realm.dd}/data/${realm.l}`;
     const champions = championCatalogSchema.parse(await this.getJson(`${base}/champion.json`));
     const items = itemCatalogSchema.parse(await this.getJson(`${base}/item.json`));
     const enrichedItems = Object.entries(items.data).map(([id, item]) =>
@@ -35,7 +41,8 @@ export class DataDragonClient {
       version: realm.dd,
       locale: realm.l,
       champions: champions.data,
-      items: enrichedItems
+      items: enrichedItems,
+      aliases: aliasesFor(realm.dd)
     };
   }
 

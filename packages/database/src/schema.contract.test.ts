@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("./schema.ts", import.meta.url), "utf8");
-const migration = readFileSync(new URL("../../../migrations/0000_initial.sql", import.meta.url), "utf8");
+const migration = ["0000_initial.sql", "0001_gray_golden_guardian.sql"]
+  .map((file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), "utf8"))
+  .join("\n");
 
 describe("canonical schema integrity contract", () => {
   it("consumes domain patch and role contracts", () => {
@@ -23,6 +25,13 @@ describe("canonical schema integrity contract", () => {
     expect(source.match(/foreignKey\(\{ columns: \[table\.patchId, table\.itemId\]/g)).toHaveLength(2);
     expect(migration).toContain('participant_core_items_patch_id_item_id_items_patch_id_item_id_fk');
     expect(migration).toContain('participant_boots_patch_id_item_id_items_patch_id_item_id_fk');
+  });
+
+  it("ties observations to the same patch as their match", () => {
+    expect(source).toContain('unique("matches_match_id_patch_id_unique")');
+    expect(source).toContain('foreignKey({ columns: [table.matchId, table.patchId], foreignColumns: [matches.matchId, matches.patchId] })');
+    expect(migration).toContain('matches_match_id_patch_id_unique');
+    expect(migration).toContain('participant_observations_match_id_patch_id_matches_match_id_patch_id_fk');
   });
 
   it("checks combination aggregate counts", () => {

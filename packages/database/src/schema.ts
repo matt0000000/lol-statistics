@@ -132,13 +132,17 @@ export const matches = pgTable(
     validationError: text("validation_error"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [index("matches_patch_validation_idx").on(table.patchId, table.validationState), check("matches_duration_nonnegative", sql`${table.gameDuration} >= 0`)]
+  (table) => [
+    unique("matches_match_id_patch_id_unique").on(table.matchId, table.patchId),
+    index("matches_patch_validation_idx").on(table.patchId, table.validationState),
+    check("matches_duration_nonnegative", sql`${table.gameDuration} >= 0`)
+  ]
 );
 
 export const participantObservations = pgTable(
   "participant_observations",
   {
-    matchId: text("match_id").notNull().references(() => matches.matchId),
+    matchId: text("match_id").notNull(),
     participantId: integer("participant_id").notNull(),
     patchId: integer("patch_id").notNull().references(() => patches.id),
     puuid: text("puuid").notNull(),
@@ -153,6 +157,7 @@ export const participantObservations = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.matchId, table.participantId] }),
+    foreignKey({ columns: [table.matchId, table.patchId], foreignColumns: [matches.matchId, matches.patchId] }),
     unique("participant_observations_identity_patch_unique").on(table.matchId, table.participantId, table.patchId),
     index("participant_observations_patch_champion_role_idx").on(table.patchId, table.championId, table.role)
   ]
