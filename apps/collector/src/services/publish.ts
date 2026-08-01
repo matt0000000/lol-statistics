@@ -31,17 +31,6 @@ export type CanonicalPublishInput = {
   database: Database;
 };
 
-type PublishTestHooks = {
-  beforeActivation?: () => Promise<void> | void;
-  afterDeactivation?: () => Promise<void> | void;
-};
-let publishTestHooks: PublishTestHooks | undefined;
-
-/** Internal integration-test coordination; not exported through the database/collector package surface. */
-export function __setPublishTestHooks(hooks?: PublishTestHooks): void {
-  publishTestHooks = hooks;
-}
-
 function countFailure(map: Map<string, number>, code: string, count = 1) { if (count > 0) map.set(code, (map.get(code) ?? 0) + count); }
 function equation(row: any): boolean { return Number.isSafeInteger(Number(row.wins)) && Number.isSafeInteger(Number(row.losses)) && Number.isSafeInteger(Number(row.sample)) && Number(row.wins) >= 0 && Number(row.losses) >= 0 && Number(row.sample) >= 0 && Number(row.wins) + Number(row.losses) === Number(row.sample); }
 function itemCatalogEntry(catalog: ReadonlyMap<number, any> | undefined, id: number): any {
@@ -170,7 +159,6 @@ export async function publishAtomically(input: CanonicalPublishInput): Promise<v
   await input.database.db.transaction(async (tx: any) => {
     const report = await verifyPublicationInTransaction(input, tx);
     if (!report.valid) throw new PublicationInvariantError(report.failures);
-    await publishTestHooks?.beforeActivation?.();
     const changed = await activateCanonical(tx, input.publicationId, input.runId);
     if (changed === false) throw new Error("publication activation changed no rows");
   }, { isolationLevel: "serializable" });
@@ -208,7 +196,6 @@ async function activateCanonical(tx: any, publicationId: string, runId: string):
   if (!target) return false;
   await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
   await tx.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true));
-  await publishTestHooks?.afterDeactivation?.();
   const changed = await tx.update(aggregatePublications).set({ isActive: true }).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.isActive, false))).returning({ id: aggregatePublications.id });
   if (changed.length !== 1) throw new Error("publication activation changed no rows");
   const updatedRun = await tx.update(collectionRuns).set({ status: "COMPLETED", publicationId, finishedAt: new Date(), updatedAt: new Date() }).where(and(eq(collectionRuns.id, runId), sql`(${collectionRuns.publicationId} IS NULL OR ${collectionRuns.publicationId} = ${publicationId})`)).returning({ id: collectionRuns.id });

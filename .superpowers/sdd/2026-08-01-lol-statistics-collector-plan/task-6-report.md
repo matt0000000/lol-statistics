@@ -186,3 +186,16 @@ Fix-round-5 verification:
 - `bun run db:generate` — PASS (`No schema changes, nothing to migrate`).
 - `git diff --check` — PASS.
 - `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts` — attempted; all 27 configured PostgreSQL cases failed setup with `ECONNREFUSED 127.0.0.1:5432` because no local server is available. No green PostgreSQL execution is claimed.
+
+## Escalated PostgreSQL matrix remediation
+
+- Every gated database setup now seeds official-like metadata for CORE items `3031`, `6672`, and `6692`, plus BOOTS `3006`. The empty-observations activation case retains that catalog, while the explicit empty-catalog case deletes it intentionally. This keeps all 27 configured cases executable against a real migrated PostgreSQL database.
+- Removed the production `__setPublishTestHooks` export and hook types entirely. Synchronization and failure injection are confined to each integration test database through a temporary control table and trigger. The pause trigger waits on a PostgreSQL advisory lock; the rollback trigger raises only on target activation when its test control row is enabled.
+- Added bounded `withTimeout`/`waitForLock` barriers. Flush-vs-activation now observes an activation advisory wait and a real `pg_stat_activity` row-lock waiter before releasing the advisory lock, then asserts activation success, exact flush rejection (`aggregate sink owner is no longer valid`), and no aggregate rows. Concurrent publication now proves overlap through the lock waiter, asserts winner/loser statuses and publication IDs, one active target, and patch publication metadata. Rollback snapshots publication flags, both run statuses/publication IDs, patch state, and every aggregate table and verifies complete restoration.
+
+Remediation verification:
+
+- `bunx vitest run apps/collector/src/services/publish.test.ts apps/collector/src/services/rebuild-aggregates.test.ts apps/collector/src/services/publish.integration.test.ts packages/database/src/repositories/aggregates.integration.test.ts` — PASS (14 unit tests; 27 PostgreSQL tests skipped without `TEST_DATABASE_URL`).
+- `bun run typecheck` — PASS for all workspaces.
+- `git diff --check` — PASS.
+- `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts` — attempted; all 27 cases failed setup with `ECONNREFUSED 127.0.0.1:5432`. No PostgreSQL execution is claimed locally.

@@ -1,19 +1,53 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDatabase, createMigratedTestDatabase, aggregatePublications, baselineAggregates, collectionRuns, itemAggregates, items, matches, participantCoreItems, participantObservations, patches, AggregatesRepository } from "@lol/database";
-import { eq } from "drizzle-orm";
-import { __setPublishTestHooks, publishAtomically } from "./publish";
+import { createDatabase, createMigratedTestDatabase, aggregatePublications, baselineAggregates, bootsAggregates, combinationAggregates, collectionRuns, itemAggregates, items, matches, participantCoreItems, participantObservations, patches, AggregatesRepository } from "@lol/database";
+import { eq, sql } from "drizzle-orm";
+import postgres from "postgres";
+import { publishAtomically } from "./publish";
 
 const url = process.env.TEST_DATABASE_URL;
+const ACTIVATION_ADVISORY_KEY = 2_147_400_001;
+const BARRIER_TIMEOUT_MS = 3_000;
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = BARRIER_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs); })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function waitForLock(client: ReturnType<typeof postgres>, predicate: (rows: any[]) => boolean, label: string): Promise<void> {
+  await withTimeout((async () => {
+    for (;;) {
+      const rows = await client.unsafe(`SELECT pid, wait_event_type, wait_event, query FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`);
+      if (predicate(rows as any[])) return;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  })(), label);
+}
+
 describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
   let database: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
   let publicationId: string;
   let runId: string;
   let productionDatabase: ReturnType<typeof createDatabase>;
+  let barrierClient: ReturnType<typeof postgres>;
   beforeEach(async () => {
     database = await createMigratedTestDatabase(url!);
+    barrierClient = postgres(database.url, { max: 1 });
+    await barrierClient.unsafe("CREATE TABLE publication_test_control (id boolean PRIMARY KEY DEFAULT true, pause_activation boolean NOT NULL DEFAULT false, fail_activation boolean NOT NULL DEFAULT false)");
+    await barrierClient.unsafe("INSERT INTO publication_test_control DEFAULT VALUES");
+    await barrierClient.unsafe("CREATE FUNCTION publication_test_activation_guard() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE control publication_test_control%ROWTYPE; BEGIN SELECT * INTO control FROM publication_test_control WHERE id = true; IF NEW.is_active AND control.fail_activation THEN RAISE EXCEPTION 'test activation failure'; END IF; IF NEW.is_active AND control.pause_activation THEN PERFORM pg_advisory_lock(2147400001); END IF; RETURN NEW; END; $$");
+    await barrierClient.unsafe("CREATE TRIGGER publication_test_activation_guard BEFORE UPDATE OF is_active ON aggregate_publications FOR EACH ROW EXECUTE FUNCTION publication_test_activation_guard()");
     const [patch] = await database.db.insert(patches).values({ version: `99.2.${Date.now()}`, patchKey: "99.2", isActive: true }).returning({ id: patches.id });
     await database.db.insert(items).values([
       { patchId: patch!.id, itemId: 3031, normalizedBaseId: 3031, category: "CORE", classificationReason: "fixture", name: "Core", price: 1000, iconUrl: "core" },
+      { patchId: patch!.id, itemId: 6672, normalizedBaseId: 6672, category: "CORE", classificationReason: "fixture", name: "Core 2", price: 1000, iconUrl: "core-2" },
+      { patchId: patch!.id, itemId: 6692, normalizedBaseId: 6692, category: "CORE", classificationReason: "fixture", name: "Core 3", price: 1000, iconUrl: "core-3" },
       { patchId: patch!.id, itemId: 3006, normalizedBaseId: 3006, category: "BOOTS", classificationReason: "fixture", name: "Boots", price: 1000, iconUrl: "boots" }
     ]);
     const [run] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id });
@@ -22,14 +56,14 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     publicationId = publication!.id;
     productionDatabase = createDatabase(database.url);
   });
-  afterEach(async () => { if (productionDatabase) await productionDatabase.close(); if (database) await database.close(); });
+  afterEach(async () => {
+    if (barrierClient) await barrierClient.end();
+    if (productionDatabase) await productionDatabase.close();
+    if (database) await database.close();
+  });
 
-  afterEach(() => __setPublishTestHooks());
-
-  function deferred() {
-    let resolve!: () => void;
-    const promise = new Promise<void>((done) => { resolve = done; });
-    return { promise, resolve };
+  async function setControl(pauseActivation: boolean, failActivation = false) {
+    await database.db.execute(sql`UPDATE publication_test_control SET pause_activation = ${pauseActivation}, fail_activation = ${failActivation} WHERE id = true`);
   }
 
   async function seedAcceptedObservation() {
@@ -133,54 +167,74 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
   });
 
   it("serializes a flush already waiting on the target lock against activation", async () => {
-    const activationEntered = deferred();
-    const releaseActivation = deferred();
-    __setPublishTestHooks({
-      beforeActivation: async () => {
-        activationEntered.resolve();
-        await releaseActivation.promise;
-      }
-    });
+    await setControl(true);
+    await barrierClient`SELECT pg_advisory_lock(${ACTIVATION_ADVISORY_KEY})`;
     const repository = new AggregatesRepository(database.db);
     await repository.preparePublication({ publicationId, runId, patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId });
     const activation = publishAtomically({ publicationId, runId, database: productionDatabase });
-    await activationEntered.promise;
-    const flush = repository.flushGroup({ championId: 1, role: "TOP", baseline: { wins: 1, losses: 0, sample: 1 }, items: new Map(), pairs: new Map(), trios: new Map(), boots: new Map() });
-    releaseActivation.resolve();
-    const outcomes = await Promise.allSettled([activation, flush]);
-    expect(outcomes.some((result) => result.status === "fulfilled")).toBe(true);
-    const target = (await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)))[0]!;
-    const rows = await repository.rows(publicationId);
-    expect(target.isActive).toBe(true);
-    expect(rows.length === 0 || rows.length === 1).toBe(true);
+    let flush: Promise<unknown> | undefined;
+    let outcomes: PromiseSettledResult<unknown>[] | undefined;
+    try {
+      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "AdvisoryLock" && String(row.query).includes("aggregate_publications")), "activation lock barrier");
+      flush = repository.flushGroup({ championId: 1, role: "TOP", baseline: { wins: 1, losses: 0, sample: 1 }, items: new Map(), pairs: new Map(), trios: new Map(), boots: new Map() });
+      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "Lock" && String(row.query).includes("aggregate_publications")), "flush ownership-lock attempt");
+    } finally {
+      await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;
+      outcomes = await withTimeout(Promise.allSettled([activation, ...(flush ? [flush] : [])]), "flush barrier cleanup");
+    }
+    expect(outcomes[0]?.status).toBe("fulfilled");
+    expect(outcomes[1]?.status).toBe("rejected");
+    expect((outcomes[1] as PromiseRejectedResult).reason).toMatchObject({ message: expect.stringContaining("aggregate sink owner is no longer valid") });
+    expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)))[0]?.isActive).toBe(true);
+    expect(await new AggregatesRepository(database.db).rows(publicationId)).toEqual([]);
   });
 
-  it("allows concurrent publication attempts to serialize to one active target", async () => {
+  it("proves overlapping publication attempts serialize with an unchanged loser", async () => {
     const patchRow = (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!;
+    const [priorRun] = await database.db.insert(collectionRuns).values({ status: "COMPLETED", stage: "publish" }).returning({ id: collectionRuns.id });
+    await database.db.insert(aggregatePublications).values({ patchId: patchRow.patchId, runId: priorRun!.id, coverageStartedAt: new Date(), isActive: true });
     const [otherRun] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id });
     const [otherPublication] = await database.db.insert(aggregatePublications).values({ patchId: patchRow.patchId, runId: otherRun!.id, coverageStartedAt: new Date() }).returning({ id: aggregatePublications.id });
-    const firstEntered = deferred();
-    const releaseFirst = deferred();
-    __setPublishTestHooks({ beforeActivation: async () => { firstEntered.resolve(); await releaseFirst.promise; } });
+    await setControl(true);
+    await barrierClient`SELECT pg_advisory_lock(${ACTIVATION_ADVISORY_KEY})`;
     const first = publishAtomically({ publicationId, runId, database: productionDatabase });
-    await firstEntered.promise;
-    const second = publishAtomically({ publicationId: otherPublication!.id, runId: otherRun!.id, database: productionDatabase });
-    releaseFirst.resolve();
-    await Promise.allSettled([first, second]);
+    let second: Promise<unknown> | undefined;
+    let outcomes: PromiseSettledResult<unknown>[] | undefined;
+    try {
+      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "AdvisoryLock" && String(row.query).includes("aggregate_publications")), "first publication entry");
+      second = publishAtomically({ publicationId: otherPublication!.id, runId: otherRun!.id, database: productionDatabase });
+      await waitForLock(barrierClient, (rows) => rows.some((row) => row.wait_event_type === "Lock" && String(row.query).includes("aggregate_publications")), "second publication lock overlap");
+    } finally {
+      await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;
+      outcomes = await withTimeout(Promise.allSettled([first, ...(second ? [second] : [])]), "publication barrier cleanup");
+    }
+    expect(outcomes[0]?.status).toBe("fulfilled");
+    expect(outcomes[1]?.status).toBe("rejected");
     const publications = await database.db.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications);
     expect(publications.filter((row) => row.isActive)).toHaveLength(1);
+    expect(publications.find((row) => row.id === publicationId)?.isActive).toBe(true);
+    expect(publications.find((row) => row.id === otherPublication!.id)?.isActive).toBe(false);
+    const winner = (await database.db.select({ status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns).where(eq(collectionRuns.id, runId)))[0]!;
+    expect(winner).toEqual({ status: "COMPLETED", publicationId });
+    expect((await database.db.select({ isActive: patches.isActive, publishedAt: patches.publishedAt }).from(patches).where(eq(patches.id, patchRow.patchId)))[0]).toMatchObject({ isActive: true, publishedAt: expect.any(Date) });
+    const loser = (await database.db.select({ status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns).where(eq(collectionRuns.id, otherRun!.id)))[0]!;
+    expect(loser).toEqual({ status: "RUNNING", publicationId: null });
   });
 
-  it("rolls back a failure injected after deactivation mutates activation state", async () => {
+  it("rolls back a test-only database trigger failure with a complete snapshot", async () => {
     const [priorRun] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id });
     const [priorPublication] = await database.db.insert(aggregatePublications).values({ patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId, runId: priorRun!.id, coverageStartedAt: new Date(), isActive: true }).returning({ id: aggregatePublications.id });
-    const afterDeactivation = deferred();
-    __setPublishTestHooks({ afterDeactivation: () => { afterDeactivation.resolve(); throw new Error("injected activation failure"); } });
-    await expect(publishAtomically({ publicationId, runId, database: productionDatabase })).rejects.toThrow("injected activation failure");
-    await afterDeactivation.promise;
-    const rows = await database.db.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications);
-    expect(rows.find((row) => row.id === priorPublication!.id)?.isActive).toBe(true);
-    expect(rows.find((row) => row.id === publicationId)?.isActive).toBe(false);
-    expect((await database.db.select({ status: collectionRuns.status }).from(collectionRuns).where(eq(collectionRuns.id, runId)))[0]?.status).toBe("RUNNING");
+    await database.db.update(collectionRuns).set({ status: "COMPLETED", publicationId: priorPublication!.id }).where(eq(collectionRuns.id, priorRun!.id));
+    const patchId = (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)))[0]!.patchId;
+    const patchBefore = (await database.db.select({ isActive: patches.isActive, publishedAt: patches.publishedAt }).from(patches).where(eq(patches.id, patchId)))[0]!;
+    const publicationsBefore = await database.db.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications);
+    const runsBefore = await database.db.select({ id: collectionRuns.id, status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns);
+    const aggregatesBefore = await Promise.all([database.db.select().from(baselineAggregates), database.db.select().from(itemAggregates), database.db.select().from(combinationAggregates), database.db.select().from(bootsAggregates)]);
+    await setControl(false, true);
+    await expect(publishAtomically({ publicationId, runId, database: productionDatabase })).rejects.toThrow("test activation failure");
+    expect(await database.db.select({ id: aggregatePublications.id, isActive: aggregatePublications.isActive }).from(aggregatePublications)).toEqual(publicationsBefore);
+    expect(await database.db.select({ id: collectionRuns.id, status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns)).toEqual(runsBefore);
+    expect((await database.db.select({ isActive: patches.isActive, publishedAt: patches.publishedAt }).from(patches).where(eq(patches.id, patchId)))[0]).toEqual(patchBefore);
+    expect(await Promise.all([database.db.select().from(baselineAggregates), database.db.select().from(itemAggregates), database.db.select().from(combinationAggregates), database.db.select().from(bootsAggregates)])).toEqual(aggregatesBefore);
   });
 });

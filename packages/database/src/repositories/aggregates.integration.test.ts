@@ -14,6 +14,12 @@ describe.skipIf(!url)("aggregate repository PostgreSQL invariants", () => {
     database = await createMigratedTestDatabase(url!);
     const [patch] = await database.db.insert(patches).values({ version: `99.1.${Date.now()}`, patchKey: "99.1", isActive: true }).returning({ id: patches.id });
     patchId = patch!.id;
+    await database.db.insert(items).values([
+      { patchId, itemId: 3031, normalizedBaseId: 3031, category: "CORE", classificationReason: "fixture", name: "Core", price: 1000, iconUrl: "core" },
+      { patchId, itemId: 6672, normalizedBaseId: 6672, category: "CORE", classificationReason: "fixture", name: "Core 2", price: 1000, iconUrl: "core-2" },
+      { patchId, itemId: 6692, normalizedBaseId: 6692, category: "CORE", classificationReason: "fixture", name: "Core 3", price: 1000, iconUrl: "core-3" },
+      { patchId, itemId: 3006, normalizedBaseId: 3006, category: "BOOTS", classificationReason: "fixture", name: "Boots", price: 1000, iconUrl: "boots" }
+    ]);
     const [run] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id });
     runId = run!.id;
     const [publication] = await database.db.insert(aggregatePublications).values({ patchId: patch!.id, runId: run!.id, coverageStartedAt: new Date() }).returning({ id: aggregatePublications.id });
@@ -91,7 +97,6 @@ describe.skipIf(!url)("aggregate repository PostgreSQL invariants", () => {
   });
 
   it("canonical source excludes rejected, wrong queue/platform/patch rows and preserves global ordering", async () => {
-    await database.db.insert(items).values({ patchId, itemId: 3031, normalizedBaseId: 3031, category: "CORE", classificationReason: "fixture", name: "Core", price: 1000, iconUrl: "core" });
     const now = new Date();
     await database.db.insert(matches).values([
       { matchId: "TR1_accepted", patchId, platformId: "TR1", queueId: 420, gameVersion: "99.1.1", gameCreation: now, gameDuration: 1800, validationState: "VALID" },
