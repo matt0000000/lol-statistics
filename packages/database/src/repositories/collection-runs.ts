@@ -51,6 +51,7 @@ export class CollectionRunRepository {
     if (!STAGE_ORDER.includes(stage as (typeof STAGE_ORDER)[number])) throw new Error("invalid collection stage");
     return this.db.transaction(async (tx: any) => {
       const current = await this.locked(tx, runId);
+      if (current.status === "COMPLETED" || current.status === "FAILED") throw new Error("collection run is not eligible");
       const currentRank = STAGE_ORDER.indexOf(current.stage as (typeof STAGE_ORDER)[number]);
       const nextRank = STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]);
       if (nextRank < currentRank) throw new Error("collection stage regression");

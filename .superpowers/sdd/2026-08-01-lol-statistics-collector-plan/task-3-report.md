@@ -65,3 +65,5 @@ Fix verification:
 - `git diff --check` and base-range `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` — clean.
 
 Fix Round 2 implementation base: `ae57306e4bbe444777d6caa6b93949b407df3c40`; final report/fix commit: `0315f80836ff396575c438a215d8c96ba0205861`.
+
+Post-handoff guard: terminal (`COMPLETED`/`FAILED`) runs now reject stage updates; focused unit test passes (`bunx vitest run packages/database/src/repositories/collection-runs.test.ts`, 1 passed) and database typecheck passes.
