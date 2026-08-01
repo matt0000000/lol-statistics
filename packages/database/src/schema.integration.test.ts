@@ -1,19 +1,37 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { createDatabase } from "./client";
+import { createMigratedTestDatabase } from "./test-utils";
 import { matches, patches, participantObservations } from "./schema";
 
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!url)("canonical schema", () => {
-  const database = createDatabase(url!);
+  let database: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
 
-  afterAll(() => database.close());
+  beforeAll(async () => {
+    database = await createMigratedTestDatabase(url!);
+  });
+
+  afterAll(() => database?.close());
+
+  const cleanup = async () => {
+    const rows = await database.db.select({ id: patches.id, version: patches.version }).from(patches);
+    const testRows = rows.filter((row) => /^(90|97|98)\./.test(row.version));
+    for (const row of testRows) {
+      await database.db.execute(sql`DELETE FROM participant_observations WHERE patch_id = ${row.id}`);
+      await database.db.execute(sql`DELETE FROM matches WHERE patch_id = ${row.id}`);
+      await database.db.delete(patches).where(eq(patches.id, row.id));
+    }
+  };
+
+  afterEach(async () => {
+    if (database) await cleanup();
+  });
 
   it("stores a patch once by exact Data Dragon version", async () => {
-    await database.db.insert(patches).values({ version: "16.15.1", patchKey: "16.15" }).onConflictDoNothing();
-    await database.db.insert(patches).values({ version: "16.15.1", patchKey: "16.15" }).onConflictDoNothing();
-    const rows = await database.db.select().from(patches).where(eq(patches.version, "16.15.1"));
+    await database.db.insert(patches).values({ version: "90.15.1", patchKey: "90.15" }).onConflictDoNothing();
+    await database.db.insert(patches).values({ version: "90.15.1", patchKey: "90.15" }).onConflictDoNothing();
+    const rows = await database.db.select().from(patches).where(eq(patches.version, "90.15.1"));
     expect(rows).toHaveLength(1);
   });
 

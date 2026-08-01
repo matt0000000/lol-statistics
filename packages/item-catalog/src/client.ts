@@ -27,12 +27,27 @@ export class DataDragonClient {
     // domain before constructing versioned catalog URLs.
     toPatchKey(realm.dd);
     const cdn = new URL(realm.cdn);
-    if (cdn.protocol !== "https:" || cdn.hostname !== "ddragon.leagueoflegends.com") {
+    if (
+      !/^https:\/\/ddragon\.leagueoflegends\.com\/cdn\/?$/.test(realm.cdn) ||
+      cdn.protocol !== "https:" ||
+      cdn.hostname !== "ddragon.leagueoflegends.com" ||
+      cdn.username !== "" ||
+      cdn.password !== "" ||
+      cdn.port !== "" ||
+      cdn.search !== "" ||
+      cdn.hash !== "" ||
+      !/^\/cdn\/?$/.test(cdn.pathname)
+    ) {
       throw new Error("Only the official Data Dragon CDN is allowed");
     }
-    const base = `${cdn.toString().replace(/\/$/, "")}/${realm.dd}/data/${realm.l}`;
-    const champions = championCatalogSchema.parse(await this.getJson(`${base}/champion.json`));
-    const items = itemCatalogSchema.parse(await this.getJson(`${base}/item.json`));
+    const base = new URL("/cdn/", "https://ddragon.leagueoflegends.com");
+    const catalogUrl = (name: string) =>
+      new URL(
+        `${encodeURIComponent(realm.dd)}/data/${encodeURIComponent(realm.l)}/${name}.json`,
+        base
+      ).toString();
+    const champions = championCatalogSchema.parse(await this.getJson(catalogUrl("champion")));
+    const items = itemCatalogSchema.parse(await this.getJson(catalogUrl("item")));
     const enrichedItems = Object.entries(items.data).map(([id, item]) =>
       itemDtoSchema.parse({ ...item, id: parseItemId(id) })
     );

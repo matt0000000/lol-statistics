@@ -94,11 +94,25 @@ describe("DataDragonClient", () => {
 
   it.each([
     "http://ddragon.leagueoflegends.com",
-    "https://evil.example"
+    "https://evil.example",
+    "https://user:pass@ddragon.leagueoflegends.com/cdn",
+    "https://ddragon.leagueoflegends.com:443/cdn",
+    "https://ddragon.leagueoflegends.com/cdn?x=1",
+    "https://ddragon.leagueoflegends.com/cdn#fragment",
+    "https://ddragon.leagueoflegends.com/assets"
   ])("rejects a non-official realm CDN (%s)", async (cdn) => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn })));
     await expect(new DataDragonClient(fetcher).fetchTrCatalog()).rejects.toThrow("official Data Dragon CDN");
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the official CDN base with one trailing slash", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn/" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })));
+    await expect(new DataDragonClient(fetcher).fetchTrCatalog()).resolves.toMatchObject({ version: "16.15.1" });
+    expect(String(fetcher.mock.calls[1]?.[0])).toBe("https://ddragon.leagueoflegends.com/cdn/16.15.1/data/tr_TR/champion.json");
   });
 
   it.each(["1e3", "0x10", "+1", " 1"]) (

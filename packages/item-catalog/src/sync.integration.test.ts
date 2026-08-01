@@ -1,6 +1,6 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createDatabase, items, patches, champions } from "@lol/database";
+import { createMigratedTestDatabase, items, patches, champions } from "@lol/database";
 import { itemDtoSchema, parseChampionCatalog, parseItemCatalog } from "./contracts";
 import { syncCatalog } from "./sync";
 import championFixture from "../../../fixtures/riot/ddragon-champions-16.15.1.json";
@@ -10,8 +10,31 @@ import aliases from "../../../fixtures/riot/item-aliases-16.15.1.json";
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!url)("catalog synchronization", () => {
-  const database = createDatabase(url!);
-  afterAll(() => database.close());
+  let database: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
+
+  beforeAll(async () => {
+    database = await createMigratedTestDatabase(url!);
+  });
+  afterAll(() => database?.close());
+
+  const cleanup = async () => {
+    const rows = await database.db.select({ id: patches.id }).from(patches).where(eq(patches.version, "16.15.1"));
+    const nextRows = await database.db.select({ id: patches.id }).from(patches).where(eq(patches.version, "16.16.1"));
+    const ids = [...rows, ...nextRows].map((row) => row.id);
+    if (ids.length === 0) return;
+    await database.db.delete(champions).where(eq(champions.patchId, ids[0]!));
+    await database.db.delete(items).where(eq(items.patchId, ids[0]!));
+    if (ids[1] !== undefined) {
+      await database.db.delete(champions).where(eq(champions.patchId, ids[1]));
+      await database.db.delete(items).where(eq(items.patchId, ids[1]));
+    }
+    await database.db.delete(patches).where(eq(patches.id, ids[0]!));
+    if (ids[1] !== undefined) await database.db.delete(patches).where(eq(patches.id, ids[1]));
+  };
+
+  afterEach(async () => {
+    if (database) await cleanup();
+  });
 
   it("replaces patch snapshots, classifies rows, and transitions active patches", async () => {
     const championCatalog = parseChampionCatalog(championFixture).data;
@@ -74,5 +97,22 @@ describe.skipIf(!url)("catalog synchronization", () => {
     expect(repeatedNext).toEqual(next);
     expect(await database.db.select().from(champions).where(eq(champions.patchId, next.patchId))).toHaveLength(next.champions);
     expect(await database.db.select().from(items).where(eq(items.patchId, next.patchId))).toHaveLength(next.items);
+  });
+
+  it("rolls back patch activation and catalog rows when alias validation fails", async () => {
+    const championCatalog = parseChampionCatalog(championFixture).data;
+    const parsedItems = parseItemCatalog(itemFixture).data;
+    const itemCatalog = Object.entries(parsedItems).map(([id, item]) => itemDtoSchema.parse({ ...item, id: Number(id) }));
+    const catalog = { version: "16.15.1", locale: "tr_TR", champions: championCatalog, items: itemCatalog, aliases };
+    await syncCatalog(database, catalog);
+
+    const failedCatalog = { ...catalog, version: "16.16.1", aliases: { 7002: 999999 } };
+    await expect(syncCatalog(database, failedCatalog)).rejects.toThrow("Item alias target is not in catalog");
+
+    const active = await database.db.select().from(patches).where(eq(patches.isActive, true));
+    expect(active).toHaveLength(1);
+    expect(active[0]?.version).toBe("16.15.1");
+    expect(await database.db.select().from(patches).where(eq(patches.version, "16.16.1"))).toHaveLength(0);
+    expect(await database.db.select().from(champions).where(eq(champions.patchId, active[0]!.id))).toHaveLength(1);
   });
 });
