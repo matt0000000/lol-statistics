@@ -200,7 +200,7 @@ async function activateCanonical(tx: any, publicationId: string, runId: string):
   if (changed.length !== 1) throw new Error("publication activation changed no rows");
   const updatedRun = await tx.update(collectionRuns).set({ status: "COMPLETED", publicationId, finishedAt: new Date(), updatedAt: new Date() }).where(and(eq(collectionRuns.id, runId), sql`(${collectionRuns.publicationId} IS NULL OR ${collectionRuns.publicationId} = ${publicationId})`)).returning({ id: collectionRuns.id });
   if (updatedRun.length !== 1) throw new Error("run publication changed no rows");
-  const updatedPatch = await tx.update(patches).set({ publishedAt: new Date() }).where(eq(patches.id, target.patchId)).returning({ id: patches.id });
+  const updatedPatch = await tx.update(patches).set({ publishedAt: new Date(), activePublicationId: publicationId }).where(and(eq(patches.id, target.patchId), eq(patches.isActive, true))).returning({ id: patches.id });
   if (updatedPatch.length !== 1) throw new Error("patch publication changed no rows");
   return true;
 }

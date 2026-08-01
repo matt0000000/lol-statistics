@@ -69,6 +69,7 @@ export type MemoryDiscoveryRepository = DiscoveryRepository & {
 export function memoryDiscoveryRepository(): MemoryDiscoveryRepository {
   const offsets = new Map<string, number>();
   const matches = new Map<string, Set<string>>();
+  const unavailable = new Set<string>();
   const key = (runId: string, puuid: string) => `${runId}\u0000${puuid}`;
   return {
     async loadOffset(runId, puuid) { return offsets.get(key(runId, puuid)) ?? 0; },
@@ -81,6 +82,14 @@ export function memoryDiscoveryRepository(): MemoryDiscoveryRepository {
       for (const id of ids) set.add(id);
       matches.set(runId, set);
       return set.size;
+    },
+    async markUnavailable(runId, matchId) {
+      if (!/^TR1_[0-9]+$/.test(matchId)) throw new Error("invalid match identifier");
+      if (!(matches.get(runId)?.has(matchId))) throw new Error("discovered match not found");
+      unavailable.add(`${runId}\u0000${matchId}`);
+    },
+    async pending(runId) {
+      return [...(matches.get(runId) ?? [])].filter((matchId) => !unavailable.has(`${runId}\u0000${matchId}`)).map((matchId) => ({ matchId }));
     },
     uniqueMatchCount() { return [...matches.values()].reduce((sum, set) => sum + set.size, 0); },
     checkpointFor(puuid, runId = "run-1") { return offsets.get(key(runId, puuid)) ?? 0; }

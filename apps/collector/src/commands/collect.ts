@@ -4,7 +4,7 @@ import {
   aggregatePublications, AggregatesRepository, CollectionRunRepository, createDatabase, discoveredMatches, items,
   ladderSnapshots, matches as matchesTable, patches, MatchesRepository, ObservationsRepository
 } from "@lol/database";
-import { RiotHttpClient, LeagueClient, MatchClient } from "@lol/riot-client";
+import { RiotHttpClient, LeagueClient, MatchClient, RiotHttpError } from "@lol/riot-client";
 import { DataDragonClient, syncCatalog } from "@lol/item-catalog";
 import { readCollectorConfig } from "../config";
 import { createCollectorLogger } from "../logger";
@@ -73,18 +73,29 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
           if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
           const [patch] = await database!.db.select().from(patches).where(eq(patches.id, run.patchId)).limit(1);
           if (!patch) throw Object.assign(new Error("patch not found"), { invariant: true });
-          const [players, discovered, catalogRows] = await Promise.all([
+          const [players, catalogRows] = await Promise.all([
             database!.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, run.id)),
-            database!.db.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(eq(discoveredMatches.runId, run.id)),
             database!.db.select().from(items).where(eq(items.patchId, run.patchId))
           ]);
           const eligible = new Map<string, any>(players.map((p) => [p.puuid, { tier: p.tier, division: p.division }]));
           const catalog = new Map(catalogRows.map((row) => [row.itemId, row]));
-          for (const { matchId } of discovered) {
+          const pending = discoveryRepo.pending
+            ? await discoveryRepo.pending(run.id)
+            : await database!.db.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, run.id), eq(discoveredMatches.status, "PENDING")));
+          for (const { matchId } of pending) {
             const [existing] = await database!.db.select({ id: matchesTable.matchId }).from(matchesTable).where(eq(matchesTable.matchId, matchId)).limit(1);
             if (existing) continue; // durable fetch checkpoint: never refetch canonical matches
-            const match = await matchClient.getMatch(matchId);
-            await ingestMatch({ runId: run.id, patchId: run.patchId, activePatch: patch.patchKey, match, eligiblePlayers: eligible, catalog, observations: observationsRepo, logger });
+            try {
+              const match = await matchClient.getMatch(matchId);
+              await ingestMatch({ runId: run.id, patchId: run.patchId, activePatch: patch.patchKey, match, eligiblePlayers: eligible, catalog, observations: observationsRepo, logger });
+            } catch (error) {
+              if (error instanceof RiotHttpError && error.category === "not_found") {
+                if (!discoveryRepo.markUnavailable) throw Object.assign(new Error("discovery repository cannot checkpoint unavailable matches"), { invariant: true });
+                await discoveryRepo.markUnavailable(run.id, matchId);
+                continue;
+              }
+              throw error;
+            }
           }
         },
         AGGREGATES: async (run) => {

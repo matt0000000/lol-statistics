@@ -105,6 +105,19 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     expect(await matches.uniqueMatchCount(secondRun)).toBe(1);
   });
 
+  it("marks Riot 404 matches unavailable and never returns them as pending", async () => {
+    const ladder = new LadderRepository(database.db);
+    await ladder.snapshotLadder(runId, [{ puuid: "private", tier: "EMERALD", rank: "I", queueType: "RANKED_SOLO_5x5" }]);
+    const matches = new MatchesRepository(database.db);
+    await matches.savePage(runId, "private", 2, ["TR1_404", "TR1_200"]);
+    await matches.markUnavailable(runId, "TR1_404");
+    expect(await matches.pending(runId)).toEqual([{ matchId: "TR1_200" }]);
+    const [unavailable] = await database.db.select().from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, "TR1_404")));
+    expect(unavailable).toMatchObject({ status: "UNAVAILABLE", unavailableReason: "not_found" });
+    await matches.markUnavailable(runId, "TR1_404");
+    expect(await matches.pending(runId)).toEqual([{ matchId: "TR1_200" }]);
+  });
+
   it("serializes counter updates against terminal status", async () => {
     const { CollectionRunRepository } = await import("./collection-runs");
     const runs = new CollectionRunRepository(database.db);

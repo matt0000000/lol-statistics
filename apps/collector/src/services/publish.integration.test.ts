@@ -278,7 +278,7 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     expect(publications.find((row) => row.id === otherPublication!.id)?.isActive).toBe(false);
     const winner = (await database.db.select({ status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns).where(eq(collectionRuns.id, runId)))[0]!;
     expect(winner).toEqual({ status: "COMPLETED", publicationId });
-    expect((await database.db.select({ isActive: patches.isActive, publishedAt: patches.publishedAt }).from(patches).where(eq(patches.id, patchRow.patchId)))[0]).toMatchObject({ isActive: true, publishedAt: expect.any(Date) });
+    expect((await database.db.select({ isActive: patches.isActive, publishedAt: patches.publishedAt, activePublicationId: patches.activePublicationId }).from(patches).where(eq(patches.id, patchRow.patchId)))[0]).toMatchObject({ isActive: true, publishedAt: expect.any(Date), activePublicationId: publicationId });
     const loser = (await database.db.select({ status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns).where(eq(collectionRuns.id, otherRun!.id)))[0]!;
     expect(loser).toEqual({ status: "RUNNING", publicationId: null });
   });

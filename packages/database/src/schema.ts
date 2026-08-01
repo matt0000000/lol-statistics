@@ -23,6 +23,7 @@ import {
 
 export const runStatus = pgEnum("run_status", ["PENDING", "RUNNING", "COMPLETED", "FAILED"]);
 export const validationState = pgEnum("validation_state", ["PENDING", "VALID", "INVALID", "REJECTED"]);
+export const discoveredMatchStatus = pgEnum("discovered_match_status", ["PENDING", "UNAVAILABLE"]);
 export const rejectionReason = pgEnum("rejection_reason", ["platform", "queue", "patch", "rank", "role", "remake", "duration", "required_field", "unknown_item", "invalid_item"]);
 export const role = pgEnum("role", ROLES);
 export const tier = pgEnum("tier", ["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]);
@@ -46,6 +47,7 @@ export const patches = pgTable(
     patchKey: text("patch_key").$type<PatchKey>().notNull(),
     activatedAt: timestamp("activated_at", { withTimezone: true, mode: "date" }),
     publishedAt: timestamp("published_at", { withTimezone: true, mode: "date" }),
+    activePublicationId: uuid("active_publication_id"),
     isActive: boolean("is_active").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
@@ -141,9 +143,11 @@ export const discoveredMatches = pgTable(
   {
     runId: uuid("run_id").notNull().references(() => collectionRuns.id),
     matchId: text("match_id").notNull(),
+    status: discoveredMatchStatus("status").notNull().default("PENDING"),
+    unavailableReason: text("unavailable_reason"),
     discoveredAt: timestamp("discovered_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.runId, table.matchId] }), index("discovered_matches_run_idx").on(table.runId)]
+  (table) => [primaryKey({ columns: [table.runId, table.matchId] }), index("discovered_matches_run_idx").on(table.runId), check("discovered_matches_unavailable_reason_safe", sql`${table.unavailableReason} IS NULL OR ${table.unavailableReason} = 'not_found'`), check("discovered_matches_unavailable_reason_state", sql`(${table.status} = 'UNAVAILABLE' AND ${table.unavailableReason} IS NOT NULL) OR (${table.status} = 'PENDING' AND ${table.unavailableReason} IS NULL)`)]
 );
 
 export const matches = pgTable(

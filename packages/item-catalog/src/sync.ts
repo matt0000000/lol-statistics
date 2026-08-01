@@ -1,6 +1,6 @@
 import { and, eq, notInArray } from "drizzle-orm";
 import { toPatchKey } from "@lol/domain";
-import { createDatabase, champions as championsTable, items as itemsTable, patches } from "@lol/database";
+import { createDatabase, aggregatePublications, champions as championsTable, items as itemsTable, patches } from "@lol/database";
 import { DataDragonClient } from "./client";
 import { classifyItem, type ItemCategory } from "./classifier";
 import { normalizeItemId, validateAliases, type ItemAliases } from "./normalize";
@@ -37,17 +37,23 @@ export async function syncCatalog(
 
 export async function upsertPatch(transaction: Transaction, version: string): Promise<number> {
   const patchKey = toPatchKey(version);
-  await transaction
-    .update(patches)
-    .set({ isActive: false, activatedAt: null })
-    .where(eq(patches.isActive, true));
+  const prior = (await transaction.select().from(patches).where(eq(patches.isActive, true)).for("update").limit(1))[0];
+  const existing = (await transaction.select().from(patches).where(eq(patches.version, version)).for("update").limit(1))[0];
+  const samePatchRefresh = Boolean(prior && existing && prior.id === existing.id);
+  if (!samePatchRefresh) {
+    await transaction.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+    await transaction.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true));
+    await transaction.update(patches).set({ isActive: false, activatedAt: null }).where(eq(patches.isActive, true));
+  }
 
   const [patch] = await transaction
     .insert(patches)
     .values({ version, patchKey, isActive: true, activatedAt: new Date() })
     .onConflictDoUpdate({
       target: patches.version,
-      set: { patchKey, isActive: true, activatedAt: new Date() }
+      set: samePatchRefresh
+        ? { patchKey, isActive: true }
+        : { patchKey, isActive: true, activatedAt: new Date(), activePublicationId: null, publishedAt: null }
     })
     .returning({ id: patches.id });
   if (!patch) throw new Error("Failed to upsert patch");

@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("./schema.ts", import.meta.url), "utf8");
-const migration = ["0000_initial.sql", "0001_gray_golden_guardian.sql", "0002_next_jack_murdock.sql", "0003_faulty_redwing.sql", "0004_participant_rejections.sql"]
+const migrationFiles = readdirSync(new URL("../../../migrations", import.meta.url)).filter((file) => /^000\d+_.*\.sql$/.test(file)).sort();
+const migration = migrationFiles
   .map((file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), "utf8"))
   .join("\n");
 
@@ -55,5 +56,16 @@ describe("canonical schema integrity contract", () => {
     expect(migration).toContain('ladder_snapshots_next_match_offset_nonnegative');
     expect(migration).toContain('ladder_snapshots_queue_fixed');
     expect(migration).toContain('ladder_snapshots_division_valid');
+  });
+
+  it("covers every checked-in migration and current durability invariants", () => {
+    expect(migrationFiles.length).toBeGreaterThanOrEqual(9);
+    expect(migrationFiles.map((file) => file.slice(0, 4))).toEqual(migrationFiles.map((_, index) => String(index).padStart(4, "0")));
+    expect(readFileSync(new URL("../../../migrations/meta/_journal.json", import.meta.url), "utf8")).toContain('"tag": "0007_one_publication_per_run"');
+    expect(readdirSync(new URL("../../../migrations/meta", import.meta.url))).toContain("0007_snapshot.json");
+    expect(source).toContain("activePublicationId: uuid(\"active_publication_id\")");
+    expect(source).toContain("discoveredMatchStatus");
+    expect(migration).toContain("aggregate_publications_one_per_run_idx");
+    expect(migration).toContain("discovered_matches_unavailable_reason_safe");
   });
 });

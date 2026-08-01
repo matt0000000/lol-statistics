@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createMigratedTestDatabase, items, patches, champions } from "@lol/database";
+import { createMigratedTestDatabase, aggregatePublications, collectionRuns, items, patches, champions } from "@lol/database";
 import { itemDtoSchema, parseChampionCatalog, parseItemCatalog } from "./contracts";
 import { syncCatalog } from "./sync";
 import championFixture from "../../../fixtures/riot/ddragon-champions-16.15.1.json";
@@ -32,6 +32,8 @@ describe.skipIf(!url)("catalog synchronization", () => {
     expect(patchRows).toHaveLength(1);
     expect(patchRows[0]?.isActive).toBe(true);
     const patchId = patchRows[0]!.id;
+    const [run] = await database.db.insert(collectionRuns).values({ patchId, status: "RUNNING", stage: "aggregates" }).returning();
+    const [publication] = await database.db.insert(aggregatePublications).values({ patchId, runId: run!.id, coverageStartedAt: new Date(), isActive: true }).returning();
     expect(await database.db.select().from(champions).where(eq(champions.patchId, patchId))).toHaveLength(first.champions);
     const storedItems = await database.db.select().from(items).where(eq(items.patchId, patchId));
     expect(storedItems).toHaveLength(first.items);
@@ -56,6 +58,7 @@ describe.skipIf(!url)("catalog synchronization", () => {
 
     const shrunk = { ...catalog, champions: {}, items: itemCatalog.filter((item) => item.id !== 6672) };
     const shrunkResult = await syncCatalog(database, shrunk);
+    expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publication!.id)))[0]?.isActive).toBe(true);
     expect(shrunkResult).toEqual({ patchId, champions: 0, items: first.items - 1 });
     expect(await database.db.select().from(champions).where(eq(champions.patchId, patchId))).toHaveLength(0);
     const shrunkItems = await database.db.select().from(items).where(eq(items.patchId, patchId));
@@ -73,6 +76,8 @@ describe.skipIf(!url)("catalog synchronization", () => {
     expect(nextPatchRows.filter((patch) => patch.isActive)).toHaveLength(1);
     expect(nextPatchRows.find((patch) => patch.version === "16.15.1")?.isActive).toBe(false);
     expect(nextPatchRows.find((patch) => patch.version === "16.16.1")?.isActive).toBe(true);
+    expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.id, publication!.id)))[0]?.isActive).toBe(false);
+    expect(nextPatchRows.find((patch) => patch.version === "16.16.1")).toMatchObject({ activePublicationId: null, publishedAt: null });
     expect(await database.db.select().from(champions).where(eq(champions.patchId, next.patchId))).toHaveLength(next.champions);
     expect(await database.db.select().from(items).where(eq(items.patchId, next.patchId))).toHaveLength(next.items);
 
