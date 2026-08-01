@@ -69,3 +69,19 @@ Round 4 verification:
 - `bun run db:generate` — no schema changes, nothing to migrate.
 - `git diff --check` — passed.
 - `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/schema.integration.test.ts packages/item-catalog/src/sync.integration.test.ts` — attempted; PostgreSQL is unavailable (`ECONNREFUSED 127.0.0.1:5432`), with no secondary cleanup errors masking the connection failure.
+
+## Fix Round 5
+
+- Enforced canonical UUID input and the exact generated `lol_test_<pid>_<32-hex>` target format. The source pathname is decoded and rejected when it equals the generated target; malformed UUIDs and source-target collisions fail before opening an admin connection.
+- Added local ownership tracking set only after `CREATE DATABASE` succeeds, so setup failures never drop an unowned or source database. Destructive cleanup additionally rechecks strict name and source-difference guards.
+- Added per-connection end-attempt state for admin, migration, and test clients. Each `end()` is attempted at most once even when it throws; cleanup still proceeds in deterministic close/terminate/drop/admin order, and concurrent `close()` calls share one promise.
+- Expanded stateful fake-driver tests to cover migration/test construction failures, migration end failures, terminate/drop/admin cleanup failures, error identity and attachment, exact operation ordering, ownership, malformed UUIDs, source-target distinction, and repeated/concurrent close.
+
+Round 5 verification:
+
+- `bunx vitest run packages/database/src/test-utils.test.ts` — 7 passed.
+- `bun run test` — 59 passed, 6 skipped.
+- `bun run typecheck` — all workspaces passed.
+- `bun run db:generate` — no schema changes, nothing to migrate.
+- `git diff --check` — passed.
+- `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/schema.integration.test.ts packages/item-catalog/src/sync.integration.test.ts` — attempted; PostgreSQL unavailable (`ECONNREFUSED 127.0.0.1:5432`), with no secondary cleanup errors masking the connection failure.

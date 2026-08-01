@@ -5,6 +5,8 @@ import { randomUUID as nodeRandomUUID } from "node:crypto";
 import * as schema from "./schema";
 
 const TEST_DATABASE_PREFIX = "lol_test_";
+const TEST_DATABASE_NAME_PATTERN = /^lol_test_[0-9]+_[0-9a-f]{32}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MIGRATIONS_FOLDER = new URL("../../../migrations", import.meta.url).pathname;
 
 type SqlClient = {
@@ -30,8 +32,18 @@ const defaultDependencies: TestDatabaseDependencies = {
 };
 
 function quoteDatabaseName(name: string): string {
-  if (!/^lol_test_[a-z0-9_]+$/.test(name)) throw new Error("Invalid test database name");
+  if (!TEST_DATABASE_NAME_PATTERN.test(name)) throw new Error("Invalid test database name");
   return `"${name}"`;
+}
+
+function sourceDatabaseName(sourceUrl: URL): string {
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(sourceUrl.pathname);
+  } catch {
+    throw new Error("Invalid source database name");
+  }
+  return pathname.replace(/^\//, "");
 }
 
 function asError(value: unknown): Error {
@@ -51,39 +63,45 @@ export async function createMigratedTestDatabase(
 ) {
   const dependencies = { ...defaultDependencies, ...injectedDependencies };
   const sourceUrl = new URL(url);
-  const databaseName = `${TEST_DATABASE_PREFIX}${dependencies.processId}_${dependencies.randomUUID().replaceAll("-", "")}`;
+  const rawUuid = dependencies.randomUUID();
+  if (!UUID_PATTERN.test(rawUuid)) throw new Error("Invalid test database name");
+  const databaseName = `${TEST_DATABASE_PREFIX}${dependencies.processId}_${rawUuid.replaceAll("-", "")}`;
   const quotedName = quoteDatabaseName(databaseName);
+  const sourceName = sourceDatabaseName(sourceUrl);
+  if (sourceName === databaseName) throw new Error("Generated test database must differ from source database");
   const isolatedUrl = new URL(sourceUrl.toString());
   isolatedUrl.pathname = `/${databaseName}`;
 
-  const adminSql = dependencies.postgres(sourceUrl.toString(), { max: 1 });
-  let migrationSql: SqlClient | undefined;
-  let testSql: SqlClient | undefined;
-  let databaseCreated = false;
+  type ConnectionState = { client: SqlClient; endAttempted: boolean };
+  const adminState: ConnectionState = { client: dependencies.postgres(sourceUrl.toString(), { max: 1 }), endAttempted: false };
+  let migrationState: ConnectionState | undefined;
+  let testState: ConnectionState | undefined;
+  let ownsDatabase = false;
   let dropped = false;
 
-  const endClient = async (client: SqlClient | undefined, errors: unknown[]) => {
-    if (!client) return;
+  const endClient = async (state: ConnectionState | undefined, errors: unknown[]) => {
+    if (!state || state.endAttempted) return;
+    state.endAttempted = true;
     try {
-      await client.end();
+      await state.client.end();
     } catch (error) {
       errors.push(error);
     }
   };
 
   const dropDatabase = async (errors: unknown[]) => {
-    if (dropped || !databaseCreated) return;
-    await endClient(testSql, errors);
-    await endClient(migrationSql, errors);
+    if (dropped || !ownsDatabase || !TEST_DATABASE_NAME_PATTERN.test(databaseName) || sourceName === databaseName) return;
+    await endClient(testState, errors);
+    await endClient(migrationState, errors);
     try {
-      await adminSql.unsafe(
+      await adminState.client.unsafe(
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${databaseName}' AND pid <> pg_backend_pid()`
       );
     } catch (error) {
       errors.push(error);
     }
     try {
-      await adminSql.unsafe(`DROP DATABASE ${quotedName}`);
+      await adminState.client.unsafe(`DROP DATABASE ${quotedName}`);
       dropped = true;
     } catch (error) {
       errors.push(error);
@@ -91,33 +109,32 @@ export async function createMigratedTestDatabase(
   };
 
   try {
-    await adminSql.unsafe(`CREATE DATABASE ${quotedName}`);
-    databaseCreated = true;
-    migrationSql = dependencies.postgres(isolatedUrl.toString(), { max: 1 });
-    await dependencies.migrate(dependencies.drizzle(migrationSql), { migrationsFolder: MIGRATIONS_FOLDER });
+    await adminState.client.unsafe(`CREATE DATABASE ${quotedName}`);
+    ownsDatabase = true;
+    migrationState = { client: dependencies.postgres(isolatedUrl.toString(), { max: 1 }), endAttempted: false };
+    await dependencies.migrate(dependencies.drizzle(migrationState.client), { migrationsFolder: MIGRATIONS_FOLDER });
     const migrationCloseErrors: unknown[] = [];
-    await endClient(migrationSql, migrationCloseErrors);
-    if (migrationCloseErrors.length > 0) throw asError(migrationCloseErrors[0]);
-    migrationSql = undefined;
-    testSql = dependencies.postgres(isolatedUrl.toString(), { max: 4 });
-    const database = {
-      db: dependencies.drizzle(testSql),
-      close: async () => {
-        if (closePromise) return closePromise;
-        closePromise = closeDatabase();
-        return closePromise;
-      }
-    };
+    await endClient(migrationState, migrationCloseErrors);
+    if (migrationCloseErrors.length > 0) throw migrationCloseErrors[0];
+    testState = { client: dependencies.postgres(isolatedUrl.toString(), { max: 4 }), endAttempted: false };
     let closePromise: Promise<void> | undefined;
     const closeDatabase = async () => {
       const errors: unknown[] = [];
       try {
         await dropDatabase(errors);
       } finally {
-        await endClient(adminSql, errors);
+        await endClient(adminState, errors);
       }
-      if (errors.length === 1) throw asError(errors[0]);
+      if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Test database close failed");
+    };
+    const database = {
+      db: dependencies.drizzle(testState.client),
+      close: () => {
+        if (closePromise) return closePromise;
+        closePromise = closeDatabase();
+        return closePromise;
+      }
     };
     return database;
   } catch (error) {
@@ -125,7 +142,7 @@ export async function createMigratedTestDatabase(
     try {
       await dropDatabase(cleanupErrors);
     } finally {
-      await endClient(adminSql, cleanupErrors);
+      await endClient(adminState, cleanupErrors);
     }
     attachCleanupError(error, cleanupErrors);
     throw error;
