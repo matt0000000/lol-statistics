@@ -67,4 +67,14 @@ describe("resumable collection pipeline", () => {
     expect(exitCodeForError(new Error("wrapped", { cause: { category: "auth", status: 403 } }))).toBe(2);
     expect(exitCodeForError(new Error("wrapped", { cause: { category: "rate_limit" } }))).toBe(4);
   });
+
+  it("resolves the current patch before selecting a resumable run", async () => {
+    const events: string[] = [];
+    const current = harness();
+    (current.dependencies.runs.resumeOrCreate as any).mockImplementation(async () => { events.push("resume"); return current.run; });
+    (current.dependencies as any).resolvePatchId = vi.fn(async () => { events.push("patch-preflight"); return 8; });
+    await runCollection(current.dependencies);
+    expect(events[0]).toBe("patch-preflight");
+    expect((current.dependencies as any).resolvePatchId).toHaveBeenCalledOnce();
+  });
 });

@@ -31,4 +31,11 @@ describe("publication verification", () => {
     const result = await verifyPublicationSnapshot(base({ itemCatalog: new Map() }));
     expect(result.failures).toContainEqual({ code: "CATALOG_MISSING", count: 1 });
   });
+
+  it("enforces the stored publication minimum sample", async () => {
+    const result = await verifyPublicationSnapshot(base({
+      publication: { ...base().publication!, minimumSample: 3 }
+    }));
+    expect(result.failures).toContainEqual({ code: "MINIMUM_SAMPLE", count: 1 });
+  });
 });

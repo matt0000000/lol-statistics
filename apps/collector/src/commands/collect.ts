@@ -41,10 +41,14 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
     const observationsRepo = new ObservationsRepository(database.db);
     const dataDragon = new DataDragonClient();
     let catalogPromise: ReturnType<DataDragonClient["fetchTrCatalog"]> | undefined;
+    let catalogSyncPromise: ReturnType<typeof syncCatalog> | undefined;
     const loadCatalog = () => (catalogPromise ??= dataDragon.fetchTrCatalog());
+    // Resolve the actual TR realm patch before run selection. The promise is
+    // shared with CATALOG, so the catalog is synchronized exactly once per
+    // invocation and a stale DB active patch cannot suppress a new run.
+    const ensureCurrentCatalog = () => (catalogSyncPromise ??= loadCatalog().then((catalog) => syncCatalog(database!, catalog)));
     const resolvePatchId = async (): Promise<number | undefined> => {
-      const [row] = await database!.db.select({ id: patches.id }).from(patches).where(eq(patches.isActive, true)).limit(1);
-      return row?.id;
+      return (await ensureCurrentCatalog()).patchId;
     };
     const dependencies: PipelineDependencies = {
       runs: runs as unknown as PipelineDependencies["runs"],
@@ -53,8 +57,10 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
       logger,
       stageHandlers: {
         CATALOG: async (run) => {
-          const result = await syncCatalog(database!, await loadCatalog());
-          await runs.bindPatch(run.id, result.patchId);
+          const result = await ensureCurrentCatalog();
+          if (run.patchId !== null && run.patchId !== undefined && run.patchId !== result.patchId) {
+            throw Object.assign(new Error("run patch does not match current catalog"), { invariant: true });
+          }
         },
         LADDER: async (run) => snapshotLadder({ runId: run.id, leagueClient: league, repository: ladderRepo }),
         DISCOVERY: async (run) => {

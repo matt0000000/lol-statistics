@@ -11,7 +11,11 @@ BEGIN
     FROM aggregate_publications p
   LOOP
     IF duplicate.id <> duplicate.keeper THEN
-      UPDATE collection_runs SET publication_id = duplicate.keeper WHERE id = duplicate.run_id AND publication_id = duplicate.id;
+      -- publication_id is intentionally not a FK in legacy schemas. Repair
+      -- every cross-run reference before deleting the duplicate, not just the
+      -- row whose run_id matches the duplicate publication.
+      UPDATE collection_runs SET publication_id = duplicate.keeper
+        WHERE publication_id = duplicate.id;
       DELETE FROM baseline_aggregates WHERE publication_id = duplicate.id;
       DELETE FROM item_aggregates WHERE publication_id = duplicate.id;
       DELETE FROM combination_aggregates WHERE publication_id = duplicate.id;

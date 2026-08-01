@@ -90,11 +90,20 @@ export class CollectionRunRepository {
     return updated;
   }
 
+  /** Bind the patch exactly once. A configured run's patch identity is immutable. */
   async bindPatch(runId: string, patchId: number): Promise<CollectionRun> {
     if (!Number.isSafeInteger(patchId) || patchId < 1) throw new Error("invalid patch");
-    const [updated] = await this.db.update(collectionRuns).set({ patchId, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
-    if (!updated) throw new Error("collection run not found");
-    return updated;
+    return this.db.transaction(async (tx: any) => {
+      const current = await this.locked(tx, runId);
+      if (current.patchId !== null && current.patchId !== undefined) {
+        if (current.patchId !== patchId) throw new Error("collection run patch is immutable");
+        return current;
+      }
+      if (current.status === "COMPLETED" || current.status === "FAILED") throw new Error("collection run patch is immutable");
+      const [updated] = await tx.update(collectionRuns).set({ patchId, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+      if (!updated) throw new Error("collection run not found");
+      return updated;
+    });
   }
 
   async bindPublication(runId: string, publicationId: string): Promise<CollectionRun> {

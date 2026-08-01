@@ -14,7 +14,7 @@ export type PublishSnapshot = {
   publicationId: string;
   runId: string;
   patchId: number;
-  publication?: { id: string; patchId: number; runId: string; isActive: boolean };
+  publication?: { id: string; patchId: number; runId: string; isActive: boolean; minimumSample?: number };
   patch?: { id: number; isActive: boolean; patchKey?: string };
   run?: { id: string; status: string; publicationId?: string | null; stage?: string };
   baseline?: any[];
@@ -64,6 +64,8 @@ export async function verifyPublicationSnapshot(input: PublishSnapshot): Promise
     duplicateAgg.add(`b:${key}`);
     if (!equation(row)) countFailure(failures, "COUNT_EQUATION");
     baselineByGroup.set(key, row);
+    const minimumSample = Number(input.publication?.minimumSample ?? 0);
+    if (Number.isSafeInteger(minimumSample) && minimumSample > 0 && Number(row.sample) < minimumSample) countFailure(failures, "MINIMUM_SAMPLE");
   }
   const allAgg = [
     ...aggregates.items.map((row) => ({ ...row, __kind: "item" })),
