@@ -17,7 +17,7 @@ Added `@lol/database` with a concrete Drizzle PostgreSQL schema for patches, cat
 ## Files changed
 
 - `packages/database/package.json`, `packages/database/tsconfig.json`
-- `packages/database/src/client.ts`, `packages/database/src/schema.ts`, `packages/database/src/migrate.ts`, `packages/database/src/index.ts`, `packages/database/src/schema.integration.test.ts`
+- `packages/database/src/client.ts`, `packages/database/src/schema.ts`, `packages/database/src/migrate.ts`, `packages/database/src/index.ts`, `packages/database/src/schema.integration.test.ts`, `packages/database/src/schema.contract.test.ts`
 - `drizzle.config.ts`
 - `migrations/0000_initial.sql`, `migrations/meta/0000_snapshot.json`, `migrations/meta/_journal.json`
 - `bun.lock`
