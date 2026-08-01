@@ -3,11 +3,32 @@ type Clock = () => number;
 
 type Bucket = { limit: number; windowMs: number; blockedUntil: number };
 
+class AsyncMutex {
+  private tail = Promise.resolve();
+
+  async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.tail;
+    let release!: () => void;
+    this.tail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+}
+
 /** Per-client Riot app/method rate-limit gate. Header errors fail open. */
 export class RiotRateLimitGate {
   private readonly buckets = new Map<string, Bucket>();
+  private readonly mutex = new AsyncMutex();
 
   constructor(private readonly clock: Clock, private readonly sleep: Sleep) {}
+
+  runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.mutex.runExclusive(operation);
+  }
 
   async beforeRequest(): Promise<void> {
     const now = this.clock();
@@ -31,6 +52,7 @@ export class RiotRateLimitGate {
     if (!limitHeader || !countHeader) return;
     const limits = parseBuckets(limitHeader);
     const counts = parseBuckets(countHeader);
+    if (!limits || !counts || limits.size !== counts.size || [...limits.keys()].some((window) => !counts.has(window))) return;
     const now = this.clock();
     for (const [windowSeconds, limit] of limits) {
       const count = counts.get(windowSeconds);
@@ -45,14 +67,17 @@ export class RiotRateLimitGate {
   }
 }
 
-function parseBuckets(value: string): Map<number, number> {
+function parseBuckets(value: string): Map<number, number> | null {
   const result = new Map<number, number>();
   for (const item of value.split(",")) {
-    const [rawValue, rawWindow] = item.trim().split(":");
+    const fields = item.trim().split(":");
+    if (fields.length !== 2) return null;
+    const [rawValue, rawWindow] = fields;
+    if (!/^\d+$/.test(rawValue) || !/^\d+$/.test(rawWindow)) return null;
     const parsedValue = Number(rawValue);
     const parsedWindow = Number(rawWindow);
-    if (!Number.isFinite(parsedValue) || !Number.isFinite(parsedWindow) || parsedValue < 0 || parsedWindow <= 0) continue;
+    if (!Number.isFinite(parsedValue) || !Number.isFinite(parsedWindow) || parsedValue < 0 || parsedWindow <= 0 || result.has(parsedWindow)) return null;
     result.set(parsedWindow, parsedValue);
   }
-  return result;
+  return result.size > 0 ? result : null;
 }

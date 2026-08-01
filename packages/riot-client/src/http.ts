@@ -14,6 +14,10 @@ export type RiotHttpClientOptions = {
   random?: () => number;
 };
 
+class FetchFailure {
+  constructor(readonly cause: unknown) {}
+}
+
 export class RiotHttpClient {
   private readonly fetcher: RiotFetcher;
   private readonly sleep: (milliseconds: number) => void | Promise<void>;
@@ -30,45 +34,63 @@ export class RiotHttpClient {
   async getJson<T>(request: RiotRequest<T>): Promise<T> {
     const url = buildUrl(request.host, request.path, this.options.apiKey);
     for (let retry = 0; ; retry += 1) {
-      await this.gate.beforeRequest();
       let response: Response;
       try {
-        response = await this.fetcher(url, {
-          method: "GET",
-          redirect: "error",
-          headers: { "X-Riot-Token": this.options.apiKey },
+        response = await this.gate.runExclusive(async () => {
+          await this.gate.beforeRequest();
+          let result: Response;
+          try {
+            result = await this.fetcher(url, {
+              method: "GET",
+              redirect: "error",
+              headers: { "X-Riot-Token": this.options.apiKey },
+            });
+          } catch (error) {
+            throw new FetchFailure(error);
+          }
+          this.gate.observe(result.headers);
+          return result;
         });
-      } catch {
+      } catch (error) {
+        if (!(error instanceof FetchFailure)) throw error;
+        if (!isRecognizedNetworkFailure(error.cause)) throw error.cause;
         if (retry < MAX_RETRIES) {
           await this.sleep(backoffMs(retry, this.random));
           continue;
         }
-        throw this.error("network", null, true, request.path);
+        throw this.error("network", null, true);
       }
 
-      this.gate.observe(response.headers);
       if (response.ok) {
         try {
           const body = await response.json();
           return request.schema.parse(body);
         } catch {
-          throw this.error("schema", response.status, false, request.path);
+          throw this.error("schema", response.status, false);
         }
       }
 
       const category = categoryForStatus(response.status);
       const canRetry = retryableStatus(response.status);
       if (!canRetry || retry >= MAX_RETRIES) {
-        throw this.error(category, response.status, canRetry, request.path);
+        throw this.error(category, response.status, canRetry);
       }
       const retryAfter = response.status === 429 ? parseRetryAfter(response.headers.get("Retry-After")) : null;
       await this.sleep(retryAfter ?? backoffMs(retry, this.random));
     }
   }
 
-  private error(category: RiotErrorCategory, status: number | null, retryable: boolean, path: string): RiotHttpError {
-    return new RiotHttpError(`Riot ${category} request failed at ${safeEndpoint(path)}`, status, retryable, category);
+  private error(category: RiotErrorCategory, status: number | null, retryable: boolean): RiotHttpError {
+    return new RiotHttpError(`Riot ${category} request failed`, status, retryable, category);
   }
+}
+
+function isRecognizedNetworkFailure(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { isNetworkError?: unknown; code?: unknown };
+  if (candidate.isNetworkError === true) return true;
+  return typeof candidate.code === "string" && ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "EAI_AGAIN"].includes(candidate.code);
 }
 
 function categoryForStatus(status: number): RiotErrorCategory {
@@ -85,11 +107,6 @@ function parseRetryAfter(value: string | null): number | null {
   if (!Number.isFinite(seconds) || seconds < 0) return null;
   const milliseconds = seconds * 1_000;
   return Number.isFinite(milliseconds) ? milliseconds : null;
-}
-
-function safeEndpoint(path: string): string {
-  const parts = path.split("?")[0].split("#")[0].split("/").filter(Boolean);
-  return `/${parts.slice(0, 4).join("/")}` || "/";
 }
 
 function buildUrl(host: string, path: string, forbiddenValue: string): URL {
