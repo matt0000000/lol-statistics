@@ -39,7 +39,7 @@ type LockExpectation = {
 
 async function waitForLock(client: ReturnType<typeof postgres>, expected: LockExpectation, label: string): Promise<void> {
   const deadline = Date.now() + BARRIER_TIMEOUT_MS;
-  await client`SET statement_timeout = ${BARRIER_TIMEOUT_MS}`;
+  await client`SELECT set_config('statement_timeout', ${String(BARRIER_TIMEOUT_MS)}, false)`;
   while (Date.now() < deadline) {
     const rows = await client`
       SELECT pid, application_name, wait_event_type, wait_event, query

@@ -211,3 +211,7 @@ Lock-observation verification:
 - Focused unit/integration-gated command without `TEST_DATABASE_URL`: PASS (14 unit tests; 27 PostgreSQL tests skipped).
 - `bun run typecheck`, `bunx drizzle-kit check`, `bun run db:generate`, and `git diff --check`: PASS.
 - `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/aggregates.integration.test.ts apps/collector/src/services/publish.integration.test.ts`: attempted; all 27 configured PostgreSQL tests failed setup with `ECONNREFUSED 127.0.0.1:5432`. No gated PostgreSQL execution is claimed locally.
+
+Statement-timeout compatibility fix:
+
+- Replaced the postgres.js tagged `SET statement_timeout = ${...}` call with parameter-safe `SELECT set_config('statement_timeout', ${String(...)}, false)`, preserving the finite awaited lock polling deadline. No other parameterized `SET` statements remain in the Task-6 gated tests.
