@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createMigratedTestDatabase } from "../test-utils";
-import { collectionRuns, discoveredMatches, items, ladderSnapshots, matches, participantBoots, participantCoreItems, participantObservations, patches } from "../schema";
+import { collectionRuns, discoveredMatches, items, ladderSnapshots, matches, participantBoots, participantCoreItems, participantObservations, participantRejections, patches } from "../schema";
 import { ObservationsRepository, type ParsedParticipant } from "./observations";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -42,6 +42,7 @@ describe.skipIf(!url)("validated participant observations", () => {
     const observations = await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID));
     expect(observations).toHaveLength(8);
     expect(observations.every((row) => row.puuid.startsWith(PRIVATE_PREFIX))).toBe(true);
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(2);
     const cores = await database.db.select().from(participantCoreItems).where(eq(participantCoreItems.matchId, MATCH_ID));
     expect(cores.find((row) => row.participantId === 1)).toMatchObject({ itemId: 3031, quantity: 2, slotIndex: 0 });
     expect(cores.some((row) => row.itemId === 1001 || row.itemId === 2055)).toBe(false);
@@ -111,6 +112,19 @@ describe.skipIf(!url)("validated participant observations", () => {
     expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
     const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
     expect(run).toMatchObject({ matchesIngested: 1, observationsAccepted: 0, observationsRejected: 2 });
+    expect((await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID)))[0]).toMatchObject({ validationState: "REJECTED", validationError: "NO_ELIGIBLE_PARTICIPANTS" });
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(2);
+  });
+
+  it("does not allow a rejected-only canonical match to become accepted", async () => {
+    const rejected: ParsedParticipant[] = [{ accepted: false, participantId: 1, reason: "rank" }];
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), rejected);
+    const accepted = acceptedParticipants().slice(0, 1);
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), accepted)).rejects.toThrow("match replay conflict");
+    const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(run?.status).toBe("FAILED");
+    expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(1);
   });
 });
 

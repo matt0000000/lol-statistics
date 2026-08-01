@@ -1,4 +1,4 @@
-import { evaluateParticipant, type LadderEligibility, type Role } from "@lol/domain";
+import { evaluateParticipant, toPatchKey, type LadderEligibility, type Role } from "@lol/domain";
 import { aliasesFor, normalizeItemId } from "@lol/item-catalog";
 import type { MatchDto, MatchParticipant } from "@lol/riot-client";
 import type { ObservationsRepository, ParsedCoreItem, ParsedParticipant } from "@lol/database";
@@ -9,7 +9,7 @@ export type InventoryInput = { participant: Pick<MatchParticipant, "item0" | "it
 export type FinalInventory = { rawFinalSlots: number[]; coreItems: ParsedCoreItem[]; boots?: { itemId: number; slotIndex: number } };
 
 export class InventoryParseError extends Error {
-  constructor(readonly code: "unknown_item" | "multiple_boots" | "invalid_item") { super(`inventory parse failed (${code})`); }
+  constructor(readonly code: "unknown_item" | "invalid_item") { super(`inventory parse failed (${code})`); }
 }
 
 /** Normalize final slots into a deterministic core multiset and one boots observation. */
@@ -46,7 +46,7 @@ export function parseFinalInventory(input: InventoryInput): FinalInventory {
 export type IngestMatchInput = {
   runId: string;
   patchId: number;
-  activePatch?: string;
+  activePatch: string;
   match: MatchDto;
   eligiblePlayers: ReadonlyMap<string, LadderEligibility> | Readonly<Record<string, LadderEligibility>>;
   catalog: CatalogInput;
@@ -57,9 +57,13 @@ export type IngestMatchResult = Awaited<ReturnType<ObservationsRepository["saveV
 
 export async function ingestMatch(input: IngestMatchInput): Promise<IngestMatchResult> {
   const remake = input.match.info.participants.some((participant) => participant.gameEndedInEarlySurrender === true);
-  const activePatch = input.activePatch ?? patchKey(input.match.info.gameVersion);
+  const activePatch = normalizeActivePatch(input.activePatch);
+  // Keep malformed active-patch diagnostics inside participant eligibility; do
+  // not throw payload-bearing errors before a safe rejected audit is possible.
   const parsed = input.match.info.participants.map((participant) => parseParticipant(participant, input.match, remake, lookupEligibility(input.eligiblePlayers, participant.puuid), input.catalog, activePatch));
-  return input.observations.saveValidatedMatch(input.runId, input.patchId, input.match, parsed);
+  const result = await input.observations.saveValidatedMatch(input.runId, input.patchId, input.match, parsed);
+  input.logger?.warn?.({ event: "match_ingested", runId: input.runId, observationsAccepted: result.observationsAccepted, observationsRejected: result.observationsRejected, state: result.observationsAccepted > 0 ? "VALID" : "REJECTED" });
+  return result;
 }
 
 function parseParticipant(participant: MatchParticipant, match: MatchDto, remake: boolean, eligible: LadderEligibility | undefined, catalog: CatalogInput, activePatch: string): ParsedParticipant {
@@ -84,8 +88,7 @@ function catalogRecords(catalog: CatalogInput): Map<number, CatalogItem> {
   return new Map(entries.filter(([id, item]) => Number.isSafeInteger(id) && id >= 0 && !!item));
 }
 
-function patchKey(version: string): string {
-  const match = /^(\d+\.\d+)/.exec(version);
-  if (!match) throw new Error("invalid match patch");
-  return match[1]!;
+function normalizeActivePatch(value: string): string {
+  if (!/^\d+\.\d+$/.test(value)) return "";
+  try { return toPatchKey(`${value}.0`); } catch { return ""; }
 }

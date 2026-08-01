@@ -23,6 +23,7 @@ import {
 
 export const runStatus = pgEnum("run_status", ["PENDING", "RUNNING", "COMPLETED", "FAILED"]);
 export const validationState = pgEnum("validation_state", ["PENDING", "VALID", "INVALID", "REJECTED"]);
+export const rejectionReason = pgEnum("rejection_reason", ["platform", "queue", "patch", "rank", "role", "remake", "duration", "required_field", "unknown_item", "invalid_item"]);
 export const role = pgEnum("role", ROLES);
 export const tier = pgEnum("tier", ["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]);
 export const itemCategory = pgEnum("item_category", [
@@ -181,6 +182,21 @@ export const participantObservations = pgTable(
   ]
 );
 
+export const participantRejections = pgTable(
+  "participant_rejections",
+  {
+    matchId: text("match_id").notNull(),
+    participantId: integer("participant_id").notNull(),
+    patchId: integer("patch_id").notNull(),
+    reason: rejectionReason("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
+  },
+  (table) => [
+    primaryKey({ columns: [table.matchId, table.participantId] }),
+    foreignKey({ columns: [table.matchId, table.patchId], foreignColumns: [matches.matchId, matches.patchId] })
+  ]
+);
+
 export const participantCoreItems = pgTable(
   "participant_core_items",
   {
@@ -290,6 +306,7 @@ export const schemaContract = {
   discoveredMatches: "pk(run_id, match_id), index(run_id)",
   matches: "pk(match_id), index(patch_id, validation_state)",
   participantObservations: "pk(match_id, participant_id), index(patch_id, champion_id, role)",
+  participantRejections: "pk(match_id, participant_id), fk(match_id, patch_id)",
   participantCoreItems: "pk(match_id, participant_id, slot_index)",
   participantBoots: "pk(match_id, participant_id)",
   aggregatePublications: "pk(id), unique active partial index",

@@ -2,7 +2,7 @@ import { toPatchKey, type PatchKey } from "./patch";
 import { parseTeamPosition, type Role } from "./role";
 import { parseDivision, parseTier, type Division, type Tier } from "./tiers";
 
-export type RejectionReason = "platform" | "queue" | "patch" | "rank" | "role" | "remake" | "duration" | "required_field";
+export type RejectionReason = "platform" | "queue" | "patch" | "rank" | "role" | "remake" | "duration" | "required_field" | "unknown_item" | "invalid_item";
 export type EligibilityResult = { accepted: true; role: Role; tier?: Tier; division?: Division } | { accepted: false; reason: RejectionReason };
 
 export type EligibilityInput = {

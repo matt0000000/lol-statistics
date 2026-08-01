@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("./schema.ts", import.meta.url), "utf8");
-const migration = ["0000_initial.sql", "0001_gray_golden_guardian.sql", "0002_next_jack_murdock.sql", "0003_faulty_redwing.sql"]
+const migration = ["0000_initial.sql", "0001_gray_golden_guardian.sql", "0002_next_jack_murdock.sql", "0003_faulty_redwing.sql", "0004_participant_rejections.sql"]
   .map((file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), "utf8"))
   .join("\n");
 
@@ -32,6 +32,13 @@ describe("canonical schema integrity contract", () => {
     expect(source).toContain('foreignKey({ columns: [table.matchId, table.patchId], foreignColumns: [matches.matchId, matches.patchId] })');
     expect(migration).toContain('matches_match_id_patch_id_unique');
     expect(migration).toContain('participant_observations_match_id_patch_id_matches_match_id_patch_id_fk');
+  });
+
+  it("persists constrained rejected participant outcomes", () => {
+    expect(source).toContain('pgEnum("rejection_reason"');
+    expect(source).toContain('export const participantRejections = pgTable');
+    expect(migration).toContain('CREATE TABLE "participant_rejections"');
+    expect(migration).toContain('participant_rejections_match_id_patch_id_matches_match_id_patch_id_fk');
   });
 
   it("checks combination aggregate counts", () => {

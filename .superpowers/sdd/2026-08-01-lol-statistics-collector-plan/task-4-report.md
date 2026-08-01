@@ -26,4 +26,12 @@
 - `9115905` — implementation and unit tests
 - pending follow-up commit — integration suite, report, and strict discovered-work guard
 
-No production database schema migration was needed.
+The initial implementation needed no schema migration; Fix Round 1 adds the required rejection-audit invariant migration below.
+
+## Fix Round 1
+
+- Added migration `0004_participant_rejections.sql` (and Drizzle snapshot/journal updates) with a constrained `rejection_reason` enum and composite `(match_id, patch_id)` foreign key.
+- Rejected participants are now canonical rows; replay equality covers accepted/rejected partition, rejection reason, PUUID, match validation state/error, normalized core rows, and boots.
+- Rejected-only matches persist as `REJECTED` with static `NO_ELIGIBLE_PARTICIPANTS`; accepted matches remain `VALID`. Active patch is required by ingestion and the repository enforces `patches.is_active = true`.
+- Fix-round focused/full relevant suite: 30 passed, 17 skipped (integration gated); all package typechecks passed; `db:generate` reports no pending schema changes; `git diff --check` clean.
+- PostgreSQL attempt with `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats` ran all 7 integration cases and failed visibly with `connect ECONNREFUSED 127.0.0.1:5432`.
