@@ -67,3 +67,17 @@ Fix verification:
 Fix Round 2 implementation base: `ae57306e4bbe444777d6caa6b93949b407df3c40`; final report/fix commit: `0315f80836ff396575c438a215d8c96ba0205861`.
 
 Post-handoff guard: terminal (`COMPLETED`/`FAILED`) runs now reject stage updates; focused unit test passes (`bunx vitest run packages/database/src/repositories/collection-runs.test.ts`, 1 passed) and database typecheck passes.
+
+## Fix Round 3
+
+- Added isolated PostgreSQL-gated lifecycle, counter/status, setOffset, rollback, cross-run identity, and diagnostic allowlist cases to query persisted state; retained concurrent page coverage.
+- Added static `invalid_input` service diagnostics and unit coverage.
+
+Fix verification:
+
+- `bunx vitest run` — 14 files passed, 3 PostgreSQL/integration files skipped; 115 tests passed, 12 skipped.
+- Focused services/database run — 4 files passed, 1 PostgreSQL file skipped; 13 passed, 6 skipped.
+- `bunx tsc --noEmit -p packages/database/tsconfig.json` and `bunx tsc --noEmit -p apps/collector/tsconfig.json` — passed.
+- `bun run db:generate` — no schema changes.
+- `git diff --check` and `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` — clean.
+- PostgreSQL attempt with `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/discovery.integration.test.ts` — setup failed with `ECONNREFUSED 127.0.0.1:5432`; no database tests can execute locally.

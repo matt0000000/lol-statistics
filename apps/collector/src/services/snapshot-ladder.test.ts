@@ -15,4 +15,8 @@ describe("snapshotLadder", () => {
       repository
     })).rejects.not.toThrow("secret-puuid");
   });
+
+  it("uses a static invalid_input diagnostic", async () => {
+    await expect(snapshotLadder({ runId: "", leagueClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input" });
+  });
 });

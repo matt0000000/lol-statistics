@@ -1,6 +1,6 @@
 import type { LeagueEntry } from "@lol/riot-client";
 
-export type SnapshotErrorCode = "invalid_response" | "dependency_failure";
+export type SnapshotErrorCode = "invalid_input" | "invalid_response" | "dependency_failure";
 export class SnapshotServiceError extends Error {
   constructor(readonly code: SnapshotErrorCode, message = `ladder snapshot failed (${code})`) { super(message); }
 }
@@ -12,7 +12,7 @@ export type SnapshotLadderInput = {
 };
 
 export async function snapshotLadder(input: SnapshotLadderInput): Promise<void> {
-  if (typeof input.runId !== "string" || input.runId.length === 0) throw new Error("invalid collection run");
+  if (typeof input.runId !== "string" || input.runId.length === 0) throw new SnapshotServiceError("invalid_input");
   try {
     const entries = await input.leagueClient.listEligiblePlayers();
     if (!Array.isArray(entries)) throw new SnapshotServiceError("invalid_response");

@@ -9,13 +9,13 @@ export type DiscoverMatchesInput = {
   repository: DiscoveryRepository;
 };
 
-export type DiscoveryErrorCode = "invalid_response" | "invalid_checkpoint" | "dependency_failure";
+export type DiscoveryErrorCode = "invalid_input" | "invalid_response" | "invalid_checkpoint" | "dependency_failure";
 export class DiscoveryServiceError extends Error {
   constructor(readonly code: DiscoveryErrorCode, message = `match discovery failed (${code})`) { super(message); }
 }
 
 export async function discoverMatches(input: DiscoverMatchesInput): Promise<void> {
-  validateInput(input);
+  try { validateInput(input); } catch { throw new DiscoveryServiceError("invalid_input"); }
   try {
     const startTime = Math.floor(input.coverageStart.getTime() / 1_000);
     let start: number;

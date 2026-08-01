@@ -29,4 +29,8 @@ describe("discoverMatches", () => {
     await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.toMatchObject({ code: "dependency_failure" });
     await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.not.toThrow("private-puuid");
   });
+
+  it("uses a static invalid_input diagnostic", async () => {
+    await expect(discoverMatches({ runId: "", puuid: "secret", coverageStart: new Date(), matchClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input" });
+  });
 });
