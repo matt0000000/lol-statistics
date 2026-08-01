@@ -1,0 +1,25 @@
+{
+  "name": "tr-lol-item-statistics",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun --filter @lol/web dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "bun --filter '*' typecheck",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun --filter @lol/database migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
+  }
+}

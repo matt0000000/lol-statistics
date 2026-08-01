@@ -1,0 +1,10 @@
+{
+  "name": "@lol/collector",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "catalog:sync": "tsx src/commands/sync-catalog.ts"
+  }
+}
