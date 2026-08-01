@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PUBLISH_LOCK_ORDER, publishAtomically, verifyPublicationSnapshot, type PublishSnapshot } from "./publish";
+import { PUBLISH_LOCK_ORDER, lockAndLoadCanonical, publishAtomically, verifyPublicationSnapshot, type PublishSnapshot } from "./publish";
 
 const base = (overrides: Partial<PublishSnapshot> = {}): PublishSnapshot => ({
   publicationId: "00000000-0000-4000-8000-000000000001", runId: "00000000-0000-4000-8000-000000000002", patchId: 1,
@@ -33,8 +33,38 @@ const lowSampleSnapshot = (): PublishSnapshot => base({
 });
 
 describe("publication verification", () => {
-  it("uses the same target-first then global-publication-before-patch lock order as rollover", () => {
-    expect(PUBLISH_LOCK_ORDER).toEqual(["target_publication", "active_publications", "run", "patch"]);
+  it("locks the collection run before target, active publications, and patch", () => {
+    expect(PUBLISH_LOCK_ORDER).toEqual(["run", "target_publication", "active_publications", "patch"]);
+  });
+
+  it("locks canonical rows in run, target, active-publications, patch order", async () => {
+    const calls: string[] = [];
+    const runId = base().runId;
+    const publicationId = base().publicationId;
+    const rows: Record<string, unknown[]> = {
+      collection_runs: [{ id: runId, status: "RUNNING", stage: "publish", publicationId: null }],
+      aggregate_publications: [{ id: publicationId, runId, patchId: 1, isActive: false }],
+      patches: [{ id: 1, isActive: true }]
+    };
+    const tx = {
+      select: () => ({
+        from: (table: any) => {
+          const name = table[Symbol.for("drizzle:Name")];
+          calls.push(name);
+          const chain: any = {
+            where: () => chain,
+            innerJoin: () => chain,
+            for: () => chain,
+            limit: () => chain,
+            orderBy: () => chain,
+            then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(rows[name] ?? []).then(resolve, reject)
+          };
+          return chain;
+        }
+      })
+    };
+    await lockAndLoadCanonical(tx, publicationId, runId);
+    expect(calls.slice(0, 4)).toEqual(["collection_runs", "aggregate_publications", "aggregate_publications", "patches"]);
   });
 
   it("reports deterministic count equation and missing baseline failures", async () => {

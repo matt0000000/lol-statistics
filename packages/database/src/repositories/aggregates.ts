@@ -14,11 +14,16 @@ export class AggregatesRepository {
   /** Atomically obtains the single publication target owned by a run, creating
    * it and binding the run while holding the run row lock. */
   async ensurePublicationTarget(input: { runId: string; patchId: number; coverageStartedAt: Date; minimumSample: number }): Promise<{ id: string }> {
+    if (typeof input.runId !== "string" || input.runId.trim().length === 0) throw new Error("invalid collection run id");
+    if (!Number.isSafeInteger(input.patchId) || input.patchId <= 0) throw new Error("invalid publication patch id");
     return this.db.transaction(async (tx: Tx) => {
       const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, input.runId)).for("update").limit(1))[0];
       if (!run) throw new Error("collection run not found");
       if (run.patchId !== input.patchId) throw new Error("publication patch owner mismatch");
       const existing = (await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.runId, input.runId)).for("update").limit(1))[0];
+      await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+      const patch = (await tx.select().from(patches).where(eq(patches.id, input.patchId)).for("update").limit(1))[0];
+      if (!patch) throw new Error("publication patch not found");
       if (existing) {
         if (run.publicationId && run.publicationId !== existing.id) throw new Error("collection run publication owner mismatch");
         if (!run.publicationId) await tx.update(collectionRuns).set({ publicationId: existing.id, updatedAt: new Date() }).where(eq(collectionRuns.id, input.runId));
@@ -37,8 +42,9 @@ export class AggregatesRepository {
     if (this.prepareAttempted) throw new Error("aggregate sink already prepared");
     this.prepareAttempted = true;
     await this.db.transaction(async (tx: Tx) => {
+      const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, owner.runId)).for("update").limit(1))[0];
       const row = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, owner.publicationId)).for("update").limit(1))[0];
-      if (!row || row.isActive || row.runId !== owner.runId || row.patchId !== owner.patchId) throw new Error("aggregate rebuild requires an inactive owned publication");
+      if (!run || !row || row.isActive || row.runId !== owner.runId || row.patchId !== owner.patchId) throw new Error("aggregate rebuild requires an inactive owned publication");
       for (const table of tables) await tx.delete(table).where(eq(table.publicationId, owner.publicationId));
     });
     this.preparedOwner = { ...owner };
@@ -51,8 +57,9 @@ export class AggregatesRepository {
     }
     const owner = this.preparedOwner;
     if (!owner) throw new Error("aggregate sink must be prepared");
+    const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, owner.runId)).for("update").limit(1))[0];
     const row = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, owner.publicationId)).for("update").limit(1))[0];
-    if (!row || row.isActive || row.runId !== owner.runId || row.patchId !== owner.patchId) throw new Error("aggregate sink owner is no longer valid");
+    if (!run || !row || row.isActive || row.runId !== owner.runId || row.patchId !== owner.patchId) throw new Error("aggregate sink owner is no longer valid");
     const base = { publicationId: owner.publicationId, championId: group.championId, role: group.role };
     await tx.insert(baselineAggregates).values({ ...base, ...group.baseline }).onConflictDoUpdate({ target: [baselineAggregates.publicationId, baselineAggregates.championId, baselineAggregates.role], set: { wins: group.baseline.wins, losses: group.baseline.losses, sample: group.baseline.sample } });
     for (const [itemId, count] of group.items) await tx.insert(itemAggregates).values({ ...base, itemId, ...count }).onConflictDoUpdate({ target: [itemAggregates.publicationId, itemAggregates.championId, itemAggregates.role, itemAggregates.itemId], set: count });
@@ -82,11 +89,15 @@ export class AggregatesRepository {
 
   /** Lock every canonical row participating in publication verification. */
   async lockAndLoad(tx: Tx, publicationId: string, runId: string): Promise<any> {
-    const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
-    await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
     const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
-    const patchId = publication?.patchId;
+    const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+    if (!run) throw new Error("collection run not found");
+    if (!publication) throw new Error("publication target not found");
+    if (publication.runId !== runId) throw new Error("publication target owner mismatch");
+    await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+    const patchId = publication.patchId;
     const patch = patchId ? (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0] : undefined;
+    if (!patch) throw new Error("publication patch not found");
     const [baseline, itemRows, combinations, boots] = await Promise.all([
       tx.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, publicationId)).for("update"),
       tx.select().from(itemAggregates).where(eq(itemAggregates.publicationId, publicationId)).for("update"),

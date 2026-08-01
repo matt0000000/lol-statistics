@@ -117,6 +117,43 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
     expect(run?.status).toBe("COMPLETED");
   });
 
+  it("serializes ensure(existing target) with publish at the shared run/target barrier", async () => {
+    const patchId = (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId;
+    await database.db.update(collectionRuns).set({ patchId }).where(eq(collectionRuns.id, runId));
+    const holdClient = postgres(namedUrl(database.url, "ensure-hold"), { max: 1 });
+    const ensureDatabase = createDatabase(namedUrl(database.url, "ensure-existing"), { max: 1 });
+    const publishDatabase = createDatabase(namedUrl(database.url, "publish-existing"), { max: 1 });
+    let ensure: Promise<unknown> | undefined;
+    let publish: Promise<unknown> | undefined;
+    let outcomes: PromiseSettledResult<unknown>[] | undefined;
+    let held = false;
+    try {
+      await holdClient`BEGIN`;
+      await holdClient`SELECT id FROM aggregate_publications WHERE id = ${publicationId} FOR UPDATE`;
+      held = true;
+      const ensureIdentity = await databaseIdentity(ensureDatabase);
+      const publishIdentity = await databaseIdentity(publishDatabase);
+      ensure = new AggregatesRepository(ensureDatabase.db).ensurePublicationTarget({ runId, patchId, coverageStartedAt: new Date(), minimumSample: 100 });
+      await waitForLock(barrierClient, { identity: ensureIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "ensure target lock barrier");
+      publish = publishAtomically({ publicationId, runId, database: publishDatabase });
+      await waitForLock(barrierClient, { identity: publishIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "publish target lock barrier");
+    } finally {
+      try {
+        if (held) await holdClient`ROLLBACK`;
+      } finally {
+        outcomes = await Promise.allSettled([...(ensure ? [ensure] : []), ...(publish ? [publish] : [])]);
+        await ensureDatabase.close();
+        await publishDatabase.close();
+        await holdClient.end();
+      }
+    }
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes?.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(await database.db.select().from(aggregatePublications).where(eq(aggregatePublications.runId, runId))).toHaveLength(1);
+    expect((await database.db.select({ isActive: aggregatePublications.isActive }).from(aggregatePublications).where(eq(aggregatePublications.runId, runId))).filter((row) => row.isActive)).toHaveLength(1);
+    expect((await database.db.select({ status: collectionRuns.status, publicationId: collectionRuns.publicationId }).from(collectionRuns).where(eq(collectionRuns.id, runId)))[0]).toMatchObject({ status: "COMPLETED", publicationId });
+  });
+
   it("activates a valid nonempty catalog/source target and switches a seeded active publication", async () => {
     await database.db.insert(aggregatePublications).values({ patchId: (await database.db.select({ patchId: aggregatePublications.patchId }).from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).limit(1))[0]!.patchId, runId: (await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "publish" }).returning({ id: collectionRuns.id }))[0]!.id, coverageStartedAt: new Date(), isActive: true });
     await seedCanonicalRows();
@@ -210,7 +247,7 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
       activation = publishAtomically({ publicationId, runId, database: activationDatabase });
       await waitForLock(barrierClient, { identity: activationIdentity, waitEvent: "advisory", queryFragment: "aggregate_publications" }, "activation lock barrier");
       flush = repository.flushGroup({ championId: 1, role: "TOP", baseline: { wins: 1, losses: 0, sample: 1 }, items: new Map(), pairs: new Map(), trios: new Map(), boots: new Map() });
-      await waitForLock(barrierClient, { identity: flushIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "flush ownership-lock attempt");
+      await waitForLock(barrierClient, { identity: flushIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "collection_runs" }, "flush run-lock attempt");
     } finally {
       try {
         await barrierClient`SELECT pg_advisory_unlock(${ACTIVATION_ADVISORY_KEY})`;

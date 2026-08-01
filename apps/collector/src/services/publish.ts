@@ -9,7 +9,7 @@ export class PublicationInvariantError extends Error {
   constructor(failures: InvariantFailure[]) { super("publication invariants failed"); this.name = "PublicationInvariantError"; this.failures = failures; }
 }
 
-export const PUBLISH_LOCK_ORDER = ["target_publication", "active_publications", "run", "patch"] as const;
+export const PUBLISH_LOCK_ORDER = ["run", "target_publication", "active_publications", "patch"] as const;
 
 /** Internal canonical state loaded under transaction locks. Not an input accepted by publishAtomically. */
 export type PublishSnapshot = {
@@ -32,6 +32,8 @@ export type CanonicalPublishInput = {
   runId: string;
   database: Database;
 };
+
+function validId(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0; }
 
 function countFailure(map: Map<string, number>, code: string, count = 1) { if (count > 0) map.set(code, (map.get(code) ?? 0) + count); }
 function equation(row: any): boolean { return Number.isSafeInteger(Number(row.wins)) && Number.isSafeInteger(Number(row.losses)) && Number.isSafeInteger(Number(row.sample)) && Number(row.wins) >= 0 && Number(row.losses) >= 0 && Number(row.sample) >= 0 && Number(row.wins) + Number(row.losses) === Number(row.sample); }
@@ -166,14 +168,21 @@ export async function publishAtomically(input: CanonicalPublishInput): Promise<v
   }, { isolationLevel: "serializable" });
 }
 
-async function lockAndLoadCanonical(tx: any, publicationId: string, runId: string): Promise<PublishSnapshot> {
-  const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
-  // Keep publication-target ordering consistent with activation and catalog
-  // rollover: target publication, global active publications, then run/patch.
-  await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+export async function lockAndLoadCanonical(tx: any, publicationId: string, runId: string): Promise<PublishSnapshot> {
+  if (!validId(runId)) throw new Error("invalid collection run id");
+  if (!validId(publicationId)) throw new Error("invalid publication target id");
+  // Every caller supplies both IDs, so lock the trusted run first. This
+  // prevents a spoofed publication ID from determining which run is read.
   const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
-  const patchId = publication?.patchId;
-  const patch = patchId ? (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0] : undefined;
+  if (!run) throw new Error("collection run not found");
+  const publication = (await tx.select().from(aggregatePublications).where(eq(aggregatePublications.id, publicationId)).for("update").limit(1))[0];
+  if (!publication) throw new Error("publication target not found");
+  if (publication.runId !== runId) throw new Error("publication target owner mismatch");
+  if (run.publicationId && run.publicationId !== publicationId) throw new Error("collection run publication owner mismatch");
+  await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+  const patchId = publication.patchId;
+  const patch = (await tx.select().from(patches).where(eq(patches.id, patchId)).for("update").limit(1))[0];
+  if (!patch) throw new Error("publication patch not found");
   const [baseline, itemRows, combinations, boots] = await Promise.all([
     tx.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, publicationId)).for("update"),
     tx.select().from(itemAggregates).where(eq(itemAggregates.publicationId, publicationId)).for("update"),
@@ -196,9 +205,12 @@ async function lockAndLoadCanonical(tx: any, publicationId: string, runId: strin
 }
 
 async function activateCanonical(tx: any, publicationId: string, runId: string): Promise<boolean> {
+  const run = (await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1))[0];
   const target = (await tx.select().from(aggregatePublications).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.runId, runId), eq(aggregatePublications.isActive, false))).for("update").limit(1))[0];
-  if (!target) return false;
+  if (!run || !target) return false;
   await tx.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.isActive, true)).for("update");
+  const patch = (await tx.select().from(patches).where(eq(patches.id, target.patchId)).for("update").limit(1))[0];
+  if (!patch) return false;
   await tx.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.isActive, true));
   const changed = await tx.update(aggregatePublications).set({ isActive: true }).where(and(eq(aggregatePublications.id, publicationId), eq(aggregatePublications.isActive, false))).returning({ id: aggregatePublications.id });
   if (changed.length !== 1) throw new Error("publication activation changed no rows");
