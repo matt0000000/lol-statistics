@@ -9,7 +9,9 @@
     "test:watch": "vitest",
     "typecheck": "bun --filter '*' typecheck",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun --filter @lol/database migrate"
+    "db:migrate": "bun --filter @lol/database migrate",
+    "collect": "bun --filter @lol/collector collect",
+    "collector:health": "bun --filter @lol/collector health"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

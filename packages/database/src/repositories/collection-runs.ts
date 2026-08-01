@@ -11,12 +11,85 @@ export type CollectionRunDatabase = {
 };
 
 const STAGE_ORDER = ["discovery", "snapshot", "ingest", "aggregate", "publish"] as const;
+export const COLLECTION_STAGES = ["CATALOG", "LADDER", "DISCOVERY", "MATCHES", "AGGREGATES", "VERIFY", "PUBLISH"] as const;
+type CollectionStage = (typeof COLLECTION_STAGES)[number];
 const ERROR_CODES = new Set(["DISCOVERY_FAILED", "SNAPSHOT_FAILED", "INGEST_FAILED", "VALIDATION_FAILED", "UNKNOWN"]);
 export type CollectionErrorDetails = { code: string; stage?: (typeof STAGE_ORDER)[number] };
 
 /** Persistence boundary for resumable collection runs. */
 export class CollectionRunRepository {
   constructor(private readonly db: any) {}
+
+  /** Find a pending/running or failed run only when its immutable collection parameters match. */
+  async resumeOrCreate(input: { patchId?: number; coverageDays?: number; minimumSample?: number } = {}): Promise<CollectionRun> {
+    const coverageDays = input.coverageDays ?? 35;
+    const minimumSample = input.minimumSample ?? 100;
+    if (!Number.isSafeInteger(coverageDays) || coverageDays <= 0 || !Number.isSafeInteger(minimumSample) || minimumSample < 0) throw new Error("invalid collection parameters");
+    const rows = await this.db.select().from(collectionRuns)
+      .where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED"]))
+      .orderBy(desc(collectionRuns.updatedAt), desc(collectionRuns.startedAt));
+    const match = rows.find((row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) =>
+      (row.patchId ?? null) === (input.patchId ?? null) && (row.coverageDays ?? 35) === coverageDays && (row.minimumSample ?? 100) === minimumSample
+    );
+    if (match) return match;
+    const [created] = await this.db.insert(collectionRuns).values({
+      status: "PENDING",
+      stage: "CATALOG",
+      patchId: input.patchId,
+      coverageDays,
+      minimumSample
+    }).returning();
+    if (!created) throw new Error("collection run could not be created");
+    return created;
+  }
+
+  async isStageComplete(runId: string, stage: string): Promise<boolean> {
+    const run = await this.get(runId);
+    if (!run) throw new Error("collection run not found");
+    const target = normalizeStage(stage);
+    if (run.status === "COMPLETED") return true;
+    const current = normalizeStage(String(run.stage));
+    return COLLECTION_STAGES.indexOf(current) > COLLECTION_STAGES.indexOf(target);
+  }
+
+  /** Advance the durable stage only after its handler has committed all work. */
+  async completeStage(runId: string, stage: string): Promise<CollectionRun> {
+    const target = normalizeStage(stage);
+    return this.db.transaction(async (tx: any) => {
+      const current = await this.locked(tx, runId);
+      const currentStage = normalizeStage(String(current.stage));
+      if (current.status === "FAILED") throw new Error("collection run is not eligible");
+      if (COLLECTION_STAGES.indexOf(currentStage) > COLLECTION_STAGES.indexOf(target)) return current;
+      if (currentStage !== target && current.status !== "COMPLETED") throw new Error("collection stage is not current");
+      const final = target === "PUBLISH";
+      const values: Record<string, unknown> = { updatedAt: new Date(), stage: final ? "PUBLISH" : COLLECTION_STAGES[COLLECTION_STAGES.indexOf(target) + 1] };
+      if (final && current.status !== "COMPLETED") { values.status = "COMPLETED"; values.finishedAt = new Date(); }
+      const [updated] = await tx.update(collectionRuns).set(values).where(eq(collectionRuns.id, runId)).returning();
+      if (!updated) throw new Error("collection run not found");
+      return updated;
+    });
+  }
+
+  async markFailed(runId: string, category: string, detail: Record<string, unknown> = {}, stage?: string): Promise<CollectionRun> {
+    if (!/^[a-z_]{1,64}$/.test(category)) throw new Error("invalid failure category");
+    const safeDetail = Object.fromEntries(Object.entries(detail).filter(([key, value]) => /^(type|status|code)$/.test(key) && (typeof value === "string" || typeof value === "number")));
+    const [updated] = await this.db.update(collectionRuns).set({ status: "FAILED", finishedAt: new Date(), stage: stage ? normalizeStage(stage) : undefined, errorDetails: { category, detail: safeDetail }, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+    if (!updated) throw new Error("collection run not found");
+    return updated;
+  }
+
+  async bindPatch(runId: string, patchId: number): Promise<CollectionRun> {
+    if (!Number.isSafeInteger(patchId) || patchId < 1) throw new Error("invalid patch");
+    const [updated] = await this.db.update(collectionRuns).set({ patchId, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+    if (!updated) throw new Error("collection run not found");
+    return updated;
+  }
+
+  async bindPublication(runId: string, publicationId: string): Promise<CollectionRun> {
+    const [updated] = await this.db.update(collectionRuns).set({ publicationId, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+    if (!updated) throw new Error("collection run not found");
+    return updated;
+  }
 
   async createOrResume(runId?: string): Promise<CollectionRun> {
     if (runId) {
@@ -159,4 +232,14 @@ function safeErrorDetails(value: unknown): CollectionErrorDetails {
   }
   if (Object.keys(record).some((key) => key !== "code" && key !== "stage")) throw new Error("invalid collection error details");
   return result;
+}
+
+function normalizeStage(value: string): CollectionStage {
+  const upper = value.toUpperCase();
+  if ((COLLECTION_STAGES as readonly string[]).includes(upper)) return upper as CollectionStage;
+  // Preserve compatibility with the original five-stage repository API.
+  const aliases: Record<string, CollectionStage> = { DISCOVERY: "DISCOVERY", SNAPSHOT: "LADDER", INGEST: "MATCHES", AGGREGATE: "AGGREGATES", PUBLISH: "PUBLISH" };
+  const mapped = aliases[upper];
+  if (mapped) return mapped;
+  throw new Error("invalid collection stage");
 }

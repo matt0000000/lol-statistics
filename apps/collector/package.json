@@ -5,7 +5,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "catalog:sync": "bun src/commands/sync-catalog.ts"
+    "catalog:sync": "bun src/commands/sync-catalog.ts",
+    "collect": "bun src/cli.ts collect",
+    "health": "bun src/cli.ts health"
   },
   "dependencies": {
     "@lol/domain": "workspace:*",

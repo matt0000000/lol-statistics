@@ -92,7 +92,10 @@ export const collectionRuns = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     status: runStatus("status").notNull().default("PENDING"),
-    stage: text("stage").notNull().default("discovery"),
+    stage: text("stage").notNull().default("CATALOG"),
+    patchId: integer("patch_id").references(() => patches.id),
+    coverageDays: integer("coverage_days").notNull().default(35),
+    minimumSample: integer("minimum_sample").notNull().default(100),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
     matchesDiscovered: integer("matches_discovered").notNull().default(0),
@@ -103,7 +106,11 @@ export const collectionRuns = pgTable(
     publicationId: uuid("publication_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [index("collection_runs_status_started_at_idx").on(table.status, table.startedAt)]
+  (table) => [
+    index("collection_runs_status_started_at_idx").on(table.status, table.startedAt),
+    check("collection_runs_coverage_days_positive", sql`${table.coverageDays} > 0`),
+    check("collection_runs_minimum_sample_nonnegative", sql`${table.minimumSample} >= 0`)
+  ]
 );
 
 export const ladderSnapshots = pgTable(

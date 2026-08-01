@@ -1,0 +1,103 @@
+import { PublicationInvariantError } from "./services/publish";
+
+export const COLLECTION_STAGES = [
+  "CATALOG",
+  "LADDER",
+  "DISCOVERY",
+  "MATCHES",
+  "AGGREGATES",
+  "VERIFY",
+  "PUBLISH"
+] as const;
+export type CollectionStage = (typeof COLLECTION_STAGES)[number];
+export type FailureCategory = "auth" | "invariant" | "exhausted_transient" | "unknown";
+
+export type PipelineRun = {
+  id: string;
+  status?: string;
+  stage?: string;
+  patchId?: number | null;
+  coverageDays?: number;
+  minimumSample?: number;
+  [key: string]: unknown;
+};
+
+export type PipelineDependencies = {
+  runs: {
+    resumeOrCreate: (input: { patchId?: number; coverageDays: number; minimumSample: number }) => Promise<PipelineRun>;
+    isStageComplete: (runId: string, stage: CollectionStage) => Promise<boolean>;
+    completeStage: (runId: string, stage: CollectionStage) => Promise<unknown>;
+    markFailed?: (runId: string, category: FailureCategory, detail: Record<string, unknown>, stage: CollectionStage) => Promise<unknown>;
+    markRunning?: (runId: string) => Promise<unknown>;
+  };
+  stageHandlers: Partial<Record<CollectionStage, (run: PipelineRun) => Promise<unknown>>> & Record<string, (run: PipelineRun) => Promise<unknown>>;
+  advisoryLock?: { withLock<T>(fn: () => Promise<T>): Promise<T> } | ((fn: () => Promise<unknown>) => Promise<unknown>);
+  logger?: { error?: (fields: Record<string, unknown>) => void };
+  patchId?: number;
+  coverageDays?: number;
+  minimumSample?: number;
+};
+
+/** Runs one resumable collection. Stage completion is recorded only after the handler resolves. */
+export async function runCollection(dependencies: PipelineDependencies): Promise<string> {
+  const execute = async () => {
+    const run = await dependencies.runs.resumeOrCreate({
+      patchId: dependencies.patchId,
+      coverageDays: dependencies.coverageDays ?? 35,
+      minimumSample: dependencies.minimumSample ?? 100
+    });
+    await dependencies.runs.markRunning?.(run.id);
+    try {
+      for (const stage of COLLECTION_STAGES) {
+        if (await dependencies.runs.isStageComplete(run.id, stage)) continue;
+        const handler = dependencies.stageHandlers[stage];
+        if (typeof handler !== "function") throw new Error(`missing collection stage handler: ${stage}`);
+        await handler(run);
+        await dependencies.runs.completeStage(run.id, stage);
+      }
+      return run.id;
+    } catch (error) {
+      const category = classifyFailure(error);
+      const detail = privateFailureDetail(error);
+      await dependencies.runs.markFailed?.(run.id, category, detail, currentStage(run));
+      dependencies.logger?.error?.({ event: "collection_failed", runId: run.id, stage: currentStage(run), category });
+      throw error;
+    }
+  };
+  return withAdvisoryLock(dependencies.advisoryLock, execute);
+}
+
+export function classifyFailure(error: unknown): FailureCategory {
+  if (error instanceof PublicationInvariantError || (error && typeof error === "object" && (error as { invariant?: boolean }).invariant === true)) return "invariant";
+  if (error && typeof error === "object") {
+    const candidate = error as { category?: string; status?: number; retryable?: boolean; exhausted?: boolean };
+    if (candidate.category === "auth" || candidate.status === 401 || candidate.status === 403) return "auth";
+    if (candidate.exhausted === true || candidate.category === "rate_limit" || candidate.category === "server" || candidate.category === "network" || candidate.retryable === true) return "exhausted_transient";
+  }
+  return "unknown";
+}
+
+export function exitCodeForError(error: unknown): number {
+  const category = error && typeof error === "object" && "category" in error ? (error as { category?: string }).category : classifyFailure(error);
+  return category === "auth" ? 2 : category === "invariant" ? 3 : category === "exhausted_transient" ? 4 : error ? 1 : 0;
+}
+
+function privateFailureDetail(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== "object") return { type: typeof error };
+  const candidate = error as { name?: unknown; status?: unknown; code?: unknown };
+  const detail: Record<string, unknown> = { type: typeof candidate.name === "string" ? candidate.name : "Error" };
+  if (typeof candidate.status === "number" && Number.isSafeInteger(candidate.status)) detail.status = candidate.status;
+  if (typeof candidate.code === "string" && /^[A-Z0-9_]{1,64}$/.test(candidate.code)) detail.code = candidate.code;
+  return detail;
+}
+
+function currentStage(run: PipelineRun): CollectionStage {
+  const stage = String(run.stage ?? "CATALOG").toUpperCase();
+  return (COLLECTION_STAGES as readonly string[]).includes(stage) ? stage as CollectionStage : "CATALOG";
+}
+
+export async function withAdvisoryLock<T>(lock: PipelineDependencies["advisoryLock"], fn: () => Promise<T>): Promise<T> {
+  if (!lock) return fn();
+  if (typeof lock === "function") return await lock(fn) as T;
+  return lock.withLock(fn);
+}

@@ -43,6 +43,13 @@
       "when": 1785617032951,
       "tag": "0005_concerned_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785622967162,
+      "tag": "0006_collector_run_config",
+      "breakpoints": true
     }
   ]
 }
