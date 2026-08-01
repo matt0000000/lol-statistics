@@ -1,4 +1,4 @@
-CREATE TYPE "public"."item_category" AS ENUM('CORE', 'BOOTS', 'STARTER', 'CONSUMABLE', 'TRINKET', 'QUEST', 'SUPPORT', 'MODE', 'UNKNOWN');--> statement-breakpoint
+CREATE TYPE "public"."item_category" AS ENUM('CORE', 'BOOTS', 'EXCLUDED_COMPONENT', 'EXCLUDED_STARTER', 'EXCLUDED_CONSUMABLE', 'EXCLUDED_TRINKET', 'EXCLUDED_SUPPORT', 'EXCLUDED_MODE', 'EXCLUDED_UNKNOWN');--> statement-breakpoint
 CREATE TYPE "public"."role" AS ENUM('TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY');--> statement-breakpoint
 CREATE TYPE "public"."run_status" AS ENUM('PENDING', 'RUNNING', 'COMPLETED', 'FAILED');--> statement-breakpoint
 CREATE TYPE "public"."tier" AS ENUM('EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER');--> statement-breakpoint
@@ -82,8 +82,9 @@ CREATE TABLE "item_aggregates" (
 CREATE TABLE "items" (
 	"patch_id" integer NOT NULL,
 	"item_id" integer NOT NULL,
-	"base_item_id" integer NOT NULL,
+	"normalized_base_id" integer NOT NULL,
 	"category" "item_category" NOT NULL,
+	"classification_reason" text NOT NULL,
 	"name" text NOT NULL,
 	"price" integer NOT NULL,
 	"icon_url" text NOT NULL,

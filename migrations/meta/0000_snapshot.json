@@ -1,5 +1,5 @@
 {
-  "id": "64bb1931-b73e-410d-81f3-7204fe8aae65",
+  "id": "e7a293af-691f-4a5c-b624-13f16024e344",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -610,8 +610,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "base_item_id": {
-          "name": "base_item_id",
+        "normalized_base_id": {
+          "name": "normalized_base_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
@@ -620,6 +620,12 @@
           "name": "category",
           "type": "item_category",
           "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "classification_reason": {
+          "name": "classification_reason",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -1229,13 +1235,13 @@
       "values": [
         "CORE",
         "BOOTS",
-        "STARTER",
-        "CONSUMABLE",
-        "TRINKET",
-        "QUEST",
-        "SUPPORT",
-        "MODE",
-        "UNKNOWN"
+        "EXCLUDED_COMPONENT",
+        "EXCLUDED_STARTER",
+        "EXCLUDED_CONSUMABLE",
+        "EXCLUDED_TRINKET",
+        "EXCLUDED_SUPPORT",
+        "EXCLUDED_MODE",
+        "EXCLUDED_UNKNOWN"
       ]
     },
     "public.role": {
