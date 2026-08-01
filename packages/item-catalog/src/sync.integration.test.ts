@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createMigratedTestDatabase, items, patches, champions } from "@lol/database";
 import { itemDtoSchema, parseChampionCatalog, parseItemCatalog } from "./contracts";
@@ -12,10 +12,10 @@ const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)("catalog synchronization", () => {
   let database: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     database = await createMigratedTestDatabase(url!);
   });
-  afterAll(async () => {
+  afterEach(async () => {
     if (database) await database.close();
   });
 
@@ -91,16 +91,24 @@ describe.skipIf(!url)("catalog synchronization", () => {
     const priorPatch = (await database.db.select().from(patches).where(eq(patches.version, "16.15.1")))[0]!;
     const priorChampions = await database.db.select().from(champions).where(eq(champions.patchId, priorPatch.id));
     const priorItems = await database.db.select().from(items).where(eq(items.patchId, priorPatch.id));
+    const priorChampionCount = priorChampions.length;
+    const priorItemCount = priorItems.length;
 
     const failedCatalog = { ...catalog, version: "16.16.1", aliases: { 7002: 999999 } };
     await expect(syncCatalog(database, failedCatalog)).rejects.toThrow("Item alias target is not in catalog");
 
     const active = await database.db.select().from(patches).where(eq(patches.isActive, true));
     expect(active).toHaveLength(1);
-    expect(active[0]?.version).toBe("16.15.1");
+    expect(active[0]).toEqual(priorPatch);
     expect(await database.db.select().from(patches).where(eq(patches.version, "16.16.1"))).toHaveLength(0);
-    expect(await database.db.select().from(champions).where(eq(champions.patchId, active[0]!.id))).toEqual(priorChampions);
-    expect(await database.db.select().from(items).where(eq(items.patchId, active[0]!.id))).toEqual(priorItems);
+    const activeChampions = await database.db.select().from(champions).where(eq(champions.patchId, active[0]!.id));
+    const activeItems = await database.db.select().from(items).where(eq(items.patchId, active[0]!.id));
+    expect(activeChampions).toEqual(priorChampions);
+    expect(activeItems).toEqual(priorItems);
+    expect(activeChampions).toHaveLength(priorChampionCount);
+    expect(activeItems).toHaveLength(priorItemCount);
+    expect(await database.db.select().from(champions)).toHaveLength(priorChampionCount);
+    expect(await database.db.select().from(items)).toHaveLength(priorItemCount);
     expect(priorItems.find((item) => item.itemId === 3006)?.category).toBe("BOOTS");
     expect(priorItems.find((item) => item.itemId === 3031)?.category).toBe("CORE");
   });
