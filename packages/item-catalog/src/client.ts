@@ -3,6 +3,7 @@ import {
   championCatalogSchema,
   itemDtoSchema,
   itemCatalogSchema,
+  parseItemId,
   parseRealm,
   type ChampionDto,
   type ItemDto
@@ -27,7 +28,7 @@ export class DataDragonClient {
     const champions = championCatalogSchema.parse(await this.getJson(`${base}/champion.json`));
     const items = itemCatalogSchema.parse(await this.getJson(`${base}/item.json`));
     const enrichedItems = Object.entries(items.data).map(([id, item]) =>
-      itemDtoSchema.parse({ ...item, id: Number(id) })
+      itemDtoSchema.parse({ ...item, id: parseItemId(id) })
     );
 
     return {

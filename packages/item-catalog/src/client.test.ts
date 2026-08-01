@@ -4,6 +4,7 @@ import { loadChampionFixture, loadItemFixture, loadRealmFixture } from "./contra
 import realmFixture from "../../../fixtures/riot/tr-realm-16.15.1.json";
 import championFixture from "../../../fixtures/riot/ddragon-champions-16.15.1.json";
 import itemFixture from "../../../fixtures/riot/ddragon-items-16.15.1.json";
+import itemAliasesFixture from "../../../fixtures/riot/item-aliases-16.15.1.json";
 
 describe("DataDragonClient", () => {
   it("uses the TR realm version for both catalogs", async () => {
@@ -64,14 +65,30 @@ describe("DataDragonClient", () => {
     expect(loadRealmFixture({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" }).dd).toBe("16.15.1");
     expect(loadChampionFixture({ data: { A: { id: "A", key: "1", name: "A", image: { full: "A.png" } } } }).data.A.key).toBe(1);
     expect(() => loadItemFixture({ data: { bad: { name: "missing fields" } } })).toThrow();
+    expect(() => loadChampionFixture({ data: { A: { id: "A", key: "9007199254740993", name: "A", image: { full: "A.png" } } } })).toThrow();
   });
 
   it("accepts the sanitized 16.15.1 fixtures", () => {
     expect(loadRealmFixture(realmFixture).v).toBe("16.15.1");
     expect(Object.keys(loadChampionFixture(championFixture).data)).toEqual(["Aatrox"]);
     const items = loadItemFixture(itemFixture).data;
-    expect(Object.keys(items)).toHaveLength(11);
-    expect(items["7002"].maps["11"]).toBe(true);
+    expect(Object.keys(items)).toHaveLength(10);
+    expect(itemAliasesFixture["7002"]).toBe(3031);
     expect(items["220000"].maps["11"]).toBe(false);
   });
+
+  it.each(["1e3", "0x10", "+1", " 1"]) (
+    "rejects a non-canonical item record key (%s)",
+    async (key) => {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://cdn" })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { [key]: {
+          name: "Invalid", description: "", gold: { base: 0, total: 0, sell: 0, purchasable: false },
+          into: [], from: [], tags: [], maps: { "11": true }, purchasable: false, image: { full: "invalid.png" }
+        } } })));
+
+      await expect(new DataDragonClient(fetcher).fetchTrCatalog()).rejects.toThrow();
+    }
+  );
 });

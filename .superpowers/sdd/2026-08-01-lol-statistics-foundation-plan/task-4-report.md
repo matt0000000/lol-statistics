@@ -53,4 +53,48 @@ Passed after implementation (5 tests), including URL construction, numeric key e
 
 ## Remaining concerns
 
-The fixture includes the 7002 Ornn-upgrade record required by the downstream catalog plan; that ID is not present in the current 16.15.1 Data Dragon dump, so its sanitized metadata is retained from Riot's earlier official schema while keeping the fixture narrowly scoped. Live Data Dragon and PostgreSQL integration were not run as part of this task.
+The initial implementation included a 7002 Ornn-upgrade record even though that ID is not present in the current 16.15.1 Data Dragon dump; Fix Round 1 moves that alias into a separate versioned override fixture. Live Data Dragon and PostgreSQL integration were not run as part of this task.
+
+## Fix Round 1
+
+### Changes
+
+- Required canonical decimal item record keys and safe, nonnegative integer IDs before enrichment; champion string and numeric keys now receive the same safe-integer validation.
+- Added regression tests for unsafe champion keys and non-decimal item keys (`1e3`, `0x10`, `+1`, and whitespace forms).
+- Corrected official 16.15.1 fixture values for item 3006's duplicate 1042 component and item 1038's complete `into` list.
+- Removed the unavailable 7002 record from the official 16.15.1 item fixture and moved its alias into the explicitly versioned `fixtures/riot/item-aliases-16.15.1.json` fixture.
+
+### TDD evidence
+
+RED command:
+
+```text
+bunx vitest run packages/item-catalog/src/client.test.ts
+```
+
+Result: 6 expected failures: unsafe champion key accepted, official fixture still contained 7002, and all four malformed item keys were coerced into numeric IDs.
+
+GREEN command:
+
+```text
+bunx vitest run packages/item-catalog/src/client.test.ts
+```
+
+Result: 9 passed.
+
+### Verification
+
+- `bunx vitest run packages/domain packages/database packages/item-catalog` — 15 passed, 1 database integration test skipped without `TEST_DATABASE_URL`.
+- `bun run typecheck` — all five workspaces passed.
+- `git diff --check` — clean.
+- Live endpoint comparison against `https://ddragon.leagueoflegends.com/cdn/16.15.1/data/tr_TR/item.json` confirmed the corrected 3006/1038 fields and confirmed official 16.15.1 has no 7002 record.
+
+### Fix files and commits
+
+- `packages/item-catalog/src/contracts.ts`, `packages/item-catalog/src/client.ts`, `packages/item-catalog/src/client.test.ts`
+- `fixtures/riot/ddragon-items-16.15.1.json`, `fixtures/riot/item-aliases-16.15.1.json`
+- Fix commit: pending at report authoring; follows base task commits `1052bd6`, `8c3f109`, and `8244c11`.
+
+### Residual concerns
+
+The downstream classifier/sync implementation must load the versioned alias fixture or its equivalent override map when normalizing 7002; it must not treat 7002 as an official active-patch catalog row.

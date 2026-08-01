@@ -11,6 +11,32 @@ const goldSchema = z.object({
   purchasable: z.boolean()
 });
 
+const safeNonNegativeIntegerSchema = z.number()
+  .int()
+  .nonnegative()
+  .refine(Number.isSafeInteger, "must be a safe integer");
+
+const safeChampionKeySchema = z.union([
+  z.string().regex(/^[0-9]+$/).transform((value, context) => {
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) {
+      context.addIssue({ code: "custom", message: "must be a safe integer" });
+      return z.NEVER;
+    }
+    return parsed;
+  }),
+  safeNonNegativeIntegerSchema
+]);
+
+const canonicalItemKeySchema = z.string().regex(/^[0-9]+$/).transform((value, context) => {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    context.addIssue({ code: "custom", message: "must be a safe integer" });
+    return z.NEVER;
+  }
+  return parsed;
+});
+
 export const realmSchema = z.object({
   v: z.string().min(1),
   dd: z.string().min(1),
@@ -20,7 +46,7 @@ export const realmSchema = z.object({
 
 const championSchema = z.object({
   id: z.string().min(1),
-  key: z.union([z.string().regex(/^\d+$/), z.number().int().nonnegative()]).transform(Number),
+  key: safeChampionKeySchema,
   name: z.string().min(1),
   image: imageSchema
 });
@@ -38,7 +64,7 @@ const itemSchema = z.object({
 });
 
 export const itemDtoSchema = itemSchema.extend({
-  id: z.number().int().nonnegative()
+  id: safeNonNegativeIntegerSchema
 });
 
 export const championCatalogSchema = z.object({
@@ -69,6 +95,11 @@ export function parseChampionCatalog(input: unknown): ChampionCatalogDto {
 /** Parse and validate an item catalog received from Data Dragon. */
 export function parseItemCatalog(input: unknown): ItemCatalogDto {
   return itemCatalogSchema.parse(input);
+}
+
+/** Parse a canonical decimal Data Dragon item record key into a safe number. */
+export function parseItemId(input: string): number {
+  return canonicalItemKeySchema.parse(input);
 }
 
 // Fixture loaders intentionally accept unknown values so callers cannot bypass

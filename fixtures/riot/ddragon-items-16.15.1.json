@@ -27,7 +27,7 @@
       "description": "<mainText><stats><attention>25</attention> Saldırı Hızı</stats></mainText>",
       "gold": { "base": 300, "purchasable": true, "total": 1100, "sell": 770 },
       "into": ["3172"],
-      "from": ["1001", "1042"],
+      "from": ["1001", "1042", "1042"],
       "tags": ["AttackSpeed", "Boots"],
       "maps": { "11": true, "12": true },
       "purchasable": true,
@@ -48,7 +48,7 @@
       "name": "TEK Kılıcı",
       "description": "<mainText><stats><attention>40</attention> Saldırı Gücü</stats></mainText>",
       "gold": { "base": 1300, "purchasable": true, "total": 1300, "sell": 910 },
-      "into": ["3031", "3026", "3072"],
+      "into": ["3031", "3026", "3032", "3072", "3095", "3097", "4403", "6671"],
       "from": [],
       "tags": ["Damage"],
       "maps": { "11": true, "12": true },
@@ -98,17 +98,6 @@
       "maps": { "11": true, "12": false },
       "purchasable": true,
       "image": { "full": "3865.png" }
-    },
-    "7002": {
-      "name": "Draktharr'ın Gölgeoyanı",
-      "description": "<mainText><stats><ornnBonus>75</ornnBonus> Saldırı Gücü</stats></mainText>",
-      "gold": { "base": 0, "purchasable": false, "total": 3100, "sell": 2170 },
-      "into": [],
-      "from": ["6691"],
-      "tags": ["Damage", "ArmorPenetration", "AbilityHaste"],
-      "maps": { "11": true, "12": true },
-      "purchasable": false,
-      "image": { "full": "7002.png" }
     },
     "220000": {
       "name": "Nitelik İlavesi",
