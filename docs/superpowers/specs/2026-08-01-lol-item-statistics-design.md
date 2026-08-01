@@ -12,7 +12,7 @@ The MVP covers only:
 - Platform: TR1
 - Queue: Ranked Solo/Duo (`queueId = 420`)
 - Rank at collection time: Emerald through Challenger
-- Patch: the current Data Dragon major/minor patch
+- Patch: the current TR realm Data Dragon major/minor patch
 - Roles: top, jungle, middle, bottom, and utility; the user must choose one explicitly
 - Results: individual completed core items, unordered two-item combinations, unordered three-item combinations, and upgraded boots in a separate view
 
@@ -119,13 +119,13 @@ The implementation is a TypeScript workspace containing:
 
 Each resumable collection run performs these stages:
 
-1. Read the latest Data Dragon version and treat its major/minor pair as the active publishable patch.
+1. Read the TR realm descriptor at `https://ddragon.leagueoflegends.com/realms/tr.json` and treat its Data Dragon major/minor pair as the active publishable patch.
 2. Synchronize champion and item metadata for that exact version.
 3. Fetch the TR1 Ranked Solo ladder:
    - Emerald I–IV and Diamond I–IV through paginated League-V4 entries
    - Master, Grandmaster, and Challenger through their queue-specific endpoints
 4. Store a timestamped eligible-player snapshot keyed by PUUID, tier, and division.
-5. Request Match-V5 IDs for each PUUID with queue `420` and the patch start-time boundary.
+5. Request Match-V5 IDs for each PUUID with queue `420`, a conservative 35-day discovery start time, and `count = 100`, paginating until the endpoint is exhausted.
 6. Insert discovered match IDs idempotently and enqueue unseen IDs.
 7. Fetch match details through the EUROPE regional route.
 8. Validate the match and create eligible participant observations transactionally.
@@ -134,7 +134,7 @@ Each resumable collection run performs these stages:
 
 Match discovery may find the same match through several participants. `match_id` is globally unique in the database, and `(match_id, participant_id)` is unique for observations.
 
-The patch check uses the first two components of Match-V5 `gameVersion`. If Data Dragon is temporarily behind the live game, unmatched games remain unpublished until matching item metadata exists.
+The patch check uses the first two components of Match-V5 `gameVersion`. The 35-day discovery window is intentionally wider than a normal patch and its exact start is recorded as `coverage_started_at` in the publication. If the TR realm's Data Dragon version is temporarily behind the live game, unmatched games remain unpublished until matching item metadata exists. Only matching-version observations are ever aggregated.
 
 ## 7. Eligibility Rules
 
@@ -144,8 +144,8 @@ A participant observation is eligible only when all conditions hold:
 - `queueId` equals `420`.
 - The Match-V5 major/minor version equals the active Data Dragon major/minor version.
 - The participant's PUUID occurs in the run's Emerald+ ladder snapshot.
-- `teamPosition` maps to top, jungle, middle, bottom, or utility.
-- The match is not marked as an early surrender/remake.
+- `teamPosition` maps to top, jungle, middle, bottom, or utility; the public UI labels `UTILITY` as Support.
+- No participant marks the match as an early surrender/remake.
 - The game duration is at least 300 seconds, which also rejects corrupt or remake-like records missing a reliable flag.
 
 Rank means rank at collection time, not historical rank at the exact match timestamp. The methodology page must disclose this limitation. Normal surrenders remain eligible.
@@ -165,7 +165,7 @@ The canonical model includes:
 - `participant_observations`: unique match/participant, private PUUID, champion, role, win, rank snapshot, game duration, and raw final slots
 - `participant_core_items`: normalized completed core-item multiset for an observation
 - `participant_boots`: zero or one normalized upgraded-boots item
-- `aggregate_publications`: immutable publication metadata and active/inactive state
+- `aggregate_publications`: immutable publication metadata, coverage start, collection time, thresholds, and active/inactive state
 - `item_aggregates`: publication, champion, role, item, wins, losses, and sample
 - `combination_aggregates`: publication, champion, role, combination size, canonical item multiset, wins, losses, and sample
 - `boots_aggregates`: publication, champion, role, boots item, wins, losses, and sample
@@ -208,7 +208,7 @@ These statistics are correlations. Completed-item results have survivorship and 
 
 The read-only web API provides:
 
-- `GET /api/meta`: active patch, fixed scope, publication time, run health, and minimum sample
+- `GET /api/meta`: active patch, fixed scope, coverage start, publication time, public-safe run health, and minimum sample
 - `GET /api/champions`: searchable champion catalog with roles present in the active publication
 - `GET /api/champions/{championId}`: public champion metadata and available roles; no role statistics without a role parameter
 - `GET /api/champions/{championId}/roles/{role}/stats?view=items|pairs|trios|boots&sort=adjusted|winRate|buildRate|sample&includeLowConfidence=false`
