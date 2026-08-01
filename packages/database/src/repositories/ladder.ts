@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { ladderSnapshots } from "../schema";
+import { collectionRuns, ladderSnapshots } from "../schema";
 
 const TIERS = new Set(["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]);
 const DIVISIONS = new Set(["I", "II", "III", "IV"]);
@@ -8,7 +8,7 @@ export type LadderEntry = {
   puuid: string;
   tier: string;
   rank: string;
-  queueType?: string;
+  queueType: string;
 };
 
 export class LadderRepository {
@@ -16,8 +16,9 @@ export class LadderRepository {
 
   async snapshotLadder(runId: string, entries: readonly LadderEntry[]): Promise<void> {
     validateRunId(runId);
-    const accepted = entries.filter(isAcceptedEntry);
     await this.db.transaction(async (tx: any) => {
+      await assertEligibleRun(tx, runId, true);
+      const accepted = entries.filter(isAcceptedEntry);
       for (const entry of accepted) {
         await tx.insert(ladderSnapshots).values({
           runId,
@@ -46,8 +47,10 @@ export class LadderRepository {
   async loadOffset(runId: string, puuid: string): Promise<number> {
     validateRunId(runId);
     validatePuuid(puuid);
+    await assertEligibleRun(this.db, runId, false);
     const rows = await this.db.select({ offset: ladderSnapshots.nextMatchOffset }).from(ladderSnapshots).where(and(eq(ladderSnapshots.runId, runId), eq(ladderSnapshots.puuid, puuid))).limit(1);
-    const offset = rows[0]?.offset ?? 0;
+    if (!rows[0]) throw new Error("ladder snapshot not found");
+    const offset = rows[0].offset;
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("invalid discovery offset");
     return offset;
   }
@@ -56,14 +59,22 @@ export class LadderRepository {
     validateRunId(runId);
     validatePuuid(puuid);
     validateOffset(offset);
+    await assertEligibleRun(this.db, runId, false);
     await this.db.update(ladderSnapshots)
       .set({ nextMatchOffset: sql`greatest(${ladderSnapshots.nextMatchOffset}, ${offset})` })
       .where(and(eq(ladderSnapshots.runId, runId), eq(ladderSnapshots.puuid, puuid)));
   }
 }
 
+export async function assertEligibleRun(db: any, runId: string, lock: boolean): Promise<void> {
+  const query = db.select({ id: collectionRuns.id, status: collectionRuns.status }).from(collectionRuns).where(eq(collectionRuns.id, runId));
+  const rows = await (lock ? query.for("update") : query).limit(1);
+  if (!rows[0]) throw new Error("collection run not found");
+  if (rows[0].status !== "PENDING" && rows[0].status !== "RUNNING") throw new Error("collection run is not eligible");
+}
+
 export function isAcceptedEntry(entry: LadderEntry): boolean {
-  return typeof entry.puuid === "string" && entry.puuid.length > 0 && TIERS.has(entry.tier) && DIVISIONS.has(entry.rank) && (entry.queueType === undefined || entry.queueType === "RANKED_SOLO_5x5");
+  return typeof entry.puuid === "string" && entry.puuid.length > 0 && TIERS.has(entry.tier) && DIVISIONS.has(entry.rank) && entry.queueType === "RANKED_SOLO_5x5";
 }
 
 export function validateRunId(runId: string): void {

@@ -33,3 +33,19 @@ PostgreSQL is unavailable locally. With `TEST_DATABASE_URL=postgres://lol:lol@lo
 - Migration SHA-256: `ac76a69694a3abb565a5c2e2322e489a9e7360caa419d5482f1f70786ec7ede4`
 - Implementation commit: `b45300e0bd0f222e476a4cabffe8c3fb80b0fbdc` (`feat: checkpoint ladder and match discovery`)
 
+## Fix Round 1
+
+- Serialized `savePage` transactions by locking and validating the eligible `collection_runs` row before inserts/counts; missing, terminal, and failed runs now reject without partial work.
+- Made stage/status transitions transactional and row-locked, enforced monotonic stage/status rules, terminal timestamps, resume cleanup, and allowlisted error details/counters.
+- Required existing eligible ladder snapshots for offsets, rejected unknown/terminal runs, required canonical `RANKED_SOLO_5x5`, and added queue/division database checks.
+- Redacted dependency/repository failures in both collector services to static errors and expanded concurrent, privacy, and per-test isolated integration coverage.
+
+Fix verification:
+
+- `bunx vitest run` — 13 files passed, 3 PostgreSQL/integration files skipped; 112 tests passed, 8 skipped.
+- `bunx vitest run apps/collector/src/services packages/database/src/schema.contract.test.ts packages/database/src/repositories/discovery.integration.test.ts` — 3 files passed, 1 skipped; 10 passed, 2 skipped.
+- `bunx tsc --noEmit -p packages/database/tsconfig.json` and `bunx tsc --noEmit -p apps/collector/tsconfig.json` — passed.
+- `bun run db:generate` — no schema changes after `migrations/0003_faulty_redwing.sql`.
+- `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` and working-tree `git diff --check` — clean after removing EOF blank-line warnings.
+
+Fix migration: `0003_faulty_redwing.sql`, SHA-256 `0e7ced8b6bb47796f789fbb83519cbeb1b38f2d9b8a4caa05d26eac2b749af2a`.

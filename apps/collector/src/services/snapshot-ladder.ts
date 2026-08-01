@@ -8,8 +8,11 @@ export type SnapshotLadderInput = {
 
 export async function snapshotLadder(input: SnapshotLadderInput): Promise<void> {
   if (typeof input.runId !== "string" || input.runId.length === 0) throw new Error("invalid collection run");
-  const entries = await input.leagueClient.listEligiblePlayers();
-  if (!Array.isArray(entries)) throw new Error("invalid ladder response");
-  await input.repository.snapshotLadder(input.runId, entries);
+  try {
+    const entries = await input.leagueClient.listEligiblePlayers();
+    if (!Array.isArray(entries)) throw new Error("invalid ladder response");
+    await input.repository.snapshotLadder(input.runId, entries);
+  } catch {
+    throw new Error("ladder snapshot failed");
+  }
 }
-

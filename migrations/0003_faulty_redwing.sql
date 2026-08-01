@@ -1,0 +1,2 @@
+ALTER TABLE "ladder_snapshots" ADD CONSTRAINT "ladder_snapshots_queue_fixed" CHECK ("ladder_snapshots"."queue" = 420);--> statement-breakpoint
+ALTER TABLE "ladder_snapshots" ADD CONSTRAINT "ladder_snapshots_division_valid" CHECK ("ladder_snapshots"."division" IN ('I', 'II', 'III', 'IV'));

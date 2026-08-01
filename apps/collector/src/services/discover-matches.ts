@@ -11,18 +11,22 @@ export type DiscoverMatchesInput = {
 
 export async function discoverMatches(input: DiscoverMatchesInput): Promise<void> {
   validateInput(input);
-  const startTime = Math.floor(input.coverageStart.getTime() / 1_000);
-  let start = await input.repository.loadOffset(input.runId, input.puuid);
-  validateOffset(start);
-  for (;;) {
-    const ids = await input.matchClient.listMatchIds({ puuid: input.puuid, startTime, start });
-    if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !/^TR1_[0-9]+$/.test(id))) throw new Error("invalid match discovery response");
-    if (ids.length > 100) throw new Error("invalid match discovery response");
-    const next = start + ids.length;
-    if (!Number.isSafeInteger(next) || next <= start && ids.length > 0) throw new Error("invalid discovery offset");
-    await input.repository.savePage(input.runId, input.puuid, next, ids);
-    start = next;
-    if (ids.length < 100) return;
+  try {
+    const startTime = Math.floor(input.coverageStart.getTime() / 1_000);
+    let start = await input.repository.loadOffset(input.runId, input.puuid);
+    validateOffset(start);
+    for (;;) {
+      const ids = await input.matchClient.listMatchIds({ puuid: input.puuid, startTime, start });
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !/^TR1_[0-9]+$/.test(id))) throw new Error("invalid match discovery response");
+      if (ids.length > 100) throw new Error("invalid match discovery response");
+      const next = start + ids.length;
+      if (!Number.isSafeInteger(next) || next <= start && ids.length > 0) throw new Error("invalid discovery offset");
+      await input.repository.savePage(input.runId, input.puuid, next, ids);
+      start = next;
+      if (ids.length < 100) return;
+    }
+  } catch {
+    throw new Error("match discovery failed");
   }
 }
 
@@ -62,4 +66,3 @@ export function memoryDiscoveryRepository(): MemoryDiscoveryRepository {
     checkpointFor(puuid, runId = "run-1") { return offsets.get(key(runId, puuid)) ?? 0; }
   };
 }
-

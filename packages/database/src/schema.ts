@@ -119,6 +119,8 @@ export const ladderSnapshots = pgTable(
   (table) => [
     primaryKey({ columns: [table.runId, table.puuid] }),
     index("ladder_snapshots_run_tier_idx").on(table.runId, table.tier),
+    check("ladder_snapshots_queue_fixed", sql`${table.queue} = 420`),
+    check("ladder_snapshots_division_valid", sql`${table.division} IN ('I', 'II', 'III', 'IV')`),
     check("ladder_snapshots_next_match_offset_nonnegative", sql`${table.nextMatchOffset} >= 0`)
   ]
 );

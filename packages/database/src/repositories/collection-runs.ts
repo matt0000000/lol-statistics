@@ -11,6 +11,8 @@ export type CollectionRunDatabase = {
 };
 
 const STAGE_ORDER = ["discovery", "snapshot", "ingest", "aggregate", "publish"] as const;
+const ERROR_CODES = new Set(["DISCOVERY_FAILED", "SNAPSHOT_FAILED", "INGEST_FAILED", "VALIDATION_FAILED", "UNKNOWN"]);
+export type CollectionErrorDetails = { code: string; stage?: (typeof STAGE_ORDER)[number] };
 
 /** Persistence boundary for resumable collection runs. */
 export class CollectionRunRepository {
@@ -47,15 +49,20 @@ export class CollectionRunRepository {
 
   async updateStage(runId: string, stage: string): Promise<CollectionRun> {
     if (!STAGE_ORDER.includes(stage as (typeof STAGE_ORDER)[number])) throw new Error("invalid collection stage");
-    const current = await this.require(runId);
-    const currentRank = STAGE_ORDER.indexOf(current.stage as (typeof STAGE_ORDER)[number]);
-    const nextRank = STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]);
-    if (nextRank < currentRank) throw new Error("collection stage regression");
-    return this.update(runId, { stage });
+    return this.db.transaction(async (tx: any) => {
+      const current = await this.locked(tx, runId);
+      const currentRank = STAGE_ORDER.indexOf(current.stage as (typeof STAGE_ORDER)[number]);
+      const nextRank = STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]);
+      if (nextRank < currentRank) throw new Error("collection stage regression");
+      const [updated] = await tx.update(collectionRuns).set({ stage, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
+      return updated;
+    });
   }
 
   async updateStatus(runId: string, status: RunStatus, errorDetails?: unknown): Promise<CollectionRun> {
-    const current = await this.require(runId);
+    const details = errorDetails === undefined ? undefined : safeErrorDetails(errorDetails);
+    return this.db.transaction(async (tx: any) => {
+    const current = await this.locked(tx, runId);
     const allowed: Record<RunStatus, RunStatus[]> = {
       PENDING: ["PENDING", "RUNNING", "FAILED"],
       RUNNING: ["RUNNING", "COMPLETED", "FAILED"],
@@ -65,23 +72,29 @@ export class CollectionRunRepository {
     if (!allowed[current.status].includes(status)) throw new Error("invalid collection status transition");
     const values: Record<string, unknown> = { status, updatedAt: new Date() };
     if (status === "COMPLETED" || status === "FAILED") values.finishedAt = new Date();
-    if (errorDetails !== undefined) values.errorDetails = errorDetails;
-    return this.update(runId, values);
+    else if (status === "RUNNING") { values.finishedAt = null; values.errorDetails = null; }
+    if (status !== "RUNNING" && details !== undefined) values.errorDetails = details;
+    const [updated] = await tx.update(collectionRuns).set(values).where(eq(collectionRuns.id, runId)).returning();
+    return updated;
+    });
   }
 
   async updateCounters(runId: string, counters: Partial<Pick<CollectionRun, "matchesDiscovered" | "matchesIngested" | "observationsAccepted" | "observationsRejected">>): Promise<CollectionRun> {
-    await this.require(runId);
+    await this.requireEligible(runId);
     const values: Record<string, unknown> = { updatedAt: new Date() };
+    const allowedKeys = new Set(["matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected"]);
     for (const [key, value] of Object.entries(counters)) {
+      if (!allowedKeys.has(key)) throw new Error("invalid collection counter");
       if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error("invalid collection counter");
       values[key] = value;
     }
-    return this.update(runId, values);
+    return this.applyUpdate(runId, values);
   }
 
   async incrementCounters(runId: string, counters: Partial<Pick<CollectionRun, "matchesDiscovered" | "matchesIngested" | "observationsAccepted" | "observationsRejected">>): Promise<CollectionRun> {
-    await this.require(runId);
+    await this.requireEligible(runId);
     const values: Record<string, unknown> = { updatedAt: new Date() };
+    const allowedKeys = new Set(["matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected"]);
     const columns = {
       matchesDiscovered: collectionRuns.matchesDiscovered,
       matchesIngested: collectionRuns.matchesIngested,
@@ -89,16 +102,23 @@ export class CollectionRunRepository {
       observationsRejected: collectionRuns.observationsRejected
     };
     for (const [key, value] of Object.entries(counters)) {
+      if (!allowedKeys.has(key)) throw new Error("invalid collection counter");
       if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error("invalid collection counter");
       values[key] = sql`${columns[key as keyof typeof columns]} + ${value}`;
     }
-    return this.update(runId, values);
+    return this.applyUpdate(runId, values);
   }
 
-  async update(runId: string, values: Partial<typeof collectionRuns.$inferInsert>): Promise<CollectionRun> {
+  private async applyUpdate(runId: string, values: Partial<typeof collectionRuns.$inferInsert>): Promise<CollectionRun> {
     const [updated] = await this.db.update(collectionRuns).set({ ...values, updatedAt: new Date() }).where(eq(collectionRuns.id, runId)).returning();
     if (!updated) throw new Error("collection run not found");
     return updated;
+  }
+
+  private async locked(tx: any, runId: string): Promise<CollectionRun> {
+    const rows = await tx.select().from(collectionRuns).where(eq(collectionRuns.id, runId)).for("update").limit(1);
+    if (!rows[0]) throw new Error("collection run not found");
+    return rows[0];
   }
 
   private async require(runId: string): Promise<CollectionRun> {
@@ -106,4 +126,23 @@ export class CollectionRunRepository {
     if (!run) throw new Error("collection run not found");
     return run;
   }
+
+  private async requireEligible(runId: string): Promise<CollectionRun> {
+    const run = await this.require(runId);
+    if (run.status !== "PENDING" && run.status !== "RUNNING") throw new Error("collection run is not eligible");
+    return run;
+  }
+}
+
+function safeErrorDetails(value: unknown): CollectionErrorDetails {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid collection error details");
+  const record = value as Record<string, unknown>;
+  if (typeof record.code !== "string" || !ERROR_CODES.has(record.code)) throw new Error("invalid collection error details");
+  const result: CollectionErrorDetails = { code: record.code };
+  if (record.stage !== undefined) {
+    if (typeof record.stage !== "string" || !STAGE_ORDER.includes(record.stage as any)) throw new Error("invalid collection error details");
+    result.stage = record.stage as CollectionErrorDetails["stage"];
+  }
+  if (Object.keys(record).some((key) => key !== "code" && key !== "stage")) throw new Error("invalid collection error details");
+  return result;
 }

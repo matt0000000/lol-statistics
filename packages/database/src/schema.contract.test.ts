@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("./schema.ts", import.meta.url), "utf8");
-const migration = ["0000_initial.sql", "0001_gray_golden_guardian.sql", "0002_next_jack_murdock.sql"]
+const migration = ["0000_initial.sql", "0001_gray_golden_guardian.sql", "0002_next_jack_murdock.sql", "0003_faulty_redwing.sql"]
   .map((file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), "utf8"))
   .join("\n");
 
@@ -41,8 +41,12 @@ describe("canonical schema integrity contract", () => {
 
   it("defines resumable ladder and unique discovery work rows", () => {
     expect(source).toContain('nextMatchOffset: integer("next_match_offset")');
+    expect(source).toContain("ladder_snapshots_queue_fixed");
+    expect(source).toContain("ladder_snapshots_division_valid");
     expect(source).toContain('export const discoveredMatches = pgTable');
     expect(migration).toContain('CREATE TABLE "discovered_matches"');
     expect(migration).toContain('ladder_snapshots_next_match_offset_nonnegative');
+    expect(migration).toContain('ladder_snapshots_queue_fixed');
+    expect(migration).toContain('ladder_snapshots_division_valid');
   });
 });
