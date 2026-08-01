@@ -1,0 +1,11 @@
+[
+  {
+    "puuid": "fixture-player-emerald",
+    "queueType": "RANKED_SOLO_5x5",
+    "tier": "EMERALD",
+    "rank": "II",
+    "leaguePoints": 42,
+    "wins": 12,
+    "losses": 9
+  }
+]

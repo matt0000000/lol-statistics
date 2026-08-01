@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "puuid": "fixture-player-master",
+      "queueType": "RANKED_SOLO_5x5",
+      "tier": "MASTER",
+      "rank": "I",
+      "leaguePoints": 321,
+      "wins": 30,
+      "losses": 15
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "dataVersion": "2",
+    "matchId": "TR1_100000001",
+    "participants": ["fixture-player-a", "fixture-player-b"]
+  },
+  "info": {
+    "platformId": "TR1",
+    "queueId": 420,
+    "gameVersion": "16.15.1",
+    "gameCreation": 1785000000000,
+    "gameDuration": 1800,
+    "participants": [
+      {
+        "participantId": 1,
+        "puuid": "fixture-player-a",
+        "championId": 1,
+        "teamPosition": "TOP",
+        "win": true,
+        "gameEndedInEarlySurrender": false,
+        "item0": 1001,
+        "item1": 0,
+        "item2": 0,
+        "item3": 0,
+        "item4": 0,
+        "item5": 0,
+        "item6": 0
+      },
+      {
+        "participantId": 2,
+        "puuid": "fixture-player-b",
+        "championId": 2,
+        "teamPosition": "JUNGLE",
+        "win": false,
+        "gameEndedInEarlySurrender": false,
+        "item0": 1001,
+        "item1": 0,
+        "item2": 0,
+        "item3": 0,
+        "item4": 0,
+        "item5": 0,
+        "item6": 0
+      }
+    ]
+  }
+}
