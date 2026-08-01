@@ -26,18 +26,18 @@ describe("discoverMatches", () => {
   it("redacts dependency failures", async () => {
     const repository = memoryDiscoveryRepository();
     const matchClient = { listMatchIds: vi.fn().mockRejectedValue(new Error("private-puuid leaked")) };
-    await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.toMatchObject({ code: "dependency_failure" });
+    await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.toMatchObject({ code: "dependency_failure", message: "match discovery failed (dependency_failure)" });
     await expect(discoverMatches({ runId: "run-1", puuid: "private-puuid", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient, repository })).rejects.not.toThrow("private-puuid");
   });
 
   it("uses a static invalid_input diagnostic", async () => {
-    await expect(discoverMatches({ runId: "", puuid: "secret", coverageStart: new Date(), matchClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(discoverMatches({ runId: "", puuid: "secret", coverageStart: new Date(), matchClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input", message: "match discovery failed (invalid_input)" });
   });
 
   it("classifies invalid responses and checkpoints without exposing input", async () => {
     const badResponse = { listMatchIds: vi.fn().mockResolvedValue(["bad-secret-puuid"]) };
-    await expect(discoverMatches({ runId: "run-1", puuid: "secret-puuid", coverageStart: new Date(), matchClient: badResponse, repository: memoryDiscoveryRepository() })).rejects.toMatchObject({ code: "invalid_response" });
+    await expect(discoverMatches({ runId: "run-1", puuid: "secret-puuid", coverageStart: new Date(), matchClient: badResponse, repository: memoryDiscoveryRepository() })).rejects.toMatchObject({ code: "invalid_response", message: "match discovery failed (invalid_response)" });
     const badCheckpoint = { loadOffset: vi.fn().mockResolvedValue(Number.NaN), savePage: vi.fn() };
-    await expect(discoverMatches({ runId: "run-1", puuid: "secret-puuid", coverageStart: new Date(), matchClient: {} as never, repository: badCheckpoint })).rejects.toMatchObject({ code: "invalid_checkpoint" });
+    await expect(discoverMatches({ runId: "run-1", puuid: "secret-puuid", coverageStart: new Date(), matchClient: {} as never, repository: badCheckpoint })).rejects.toMatchObject({ code: "invalid_checkpoint", message: "match discovery failed (invalid_checkpoint)" });
   });
 });

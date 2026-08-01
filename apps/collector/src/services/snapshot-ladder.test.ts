@@ -8,15 +8,15 @@ describe("snapshotLadder", () => {
       runId: "run-1",
       leagueClient: { listEligiblePlayers: vi.fn().mockResolvedValue([]) },
       repository
-    })).rejects.toThrow("ladder snapshot failed");
+    })).rejects.toMatchObject({ code: "dependency_failure", message: "ladder snapshot failed (dependency_failure)" });
     await expect(snapshotLadder({
       runId: "run-1",
       leagueClient: { listEligiblePlayers: vi.fn().mockRejectedValue(new Error("secret-puuid")) },
       repository
-    })).rejects.not.toThrow("secret-puuid");
+    })).rejects.toMatchObject({ code: "dependency_failure", message: "ladder snapshot failed (dependency_failure)" });
   });
 
   it("uses a static invalid_input diagnostic", async () => {
-    await expect(snapshotLadder({ runId: "", leagueClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(snapshotLadder({ runId: "", leagueClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input", message: "ladder snapshot failed (invalid_input)" });
   });
 });

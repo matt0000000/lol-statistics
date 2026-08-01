@@ -117,9 +117,12 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     expect(row?.status).toBe("COMPLETED");
     expect(row?.matchesIngested === 0 || row?.matchesIngested === 1).toBe(true);
     if (counter.status === "fulfilled") expect(row?.matchesIngested).toBe(1);
-    else expect(row?.matchesIngested).toBe(0);
+    else {
+      expect(counter.reason).toMatchObject({ message: "collection run is not eligible" });
+      expect(row?.matchesIngested).toBe(0);
+    }
     expect(terminal.status).toBe("fulfilled");
-    await expect(runs.incrementCounters(runId, { matchesIngested: 1 })).rejects.toThrow("eligible");
+    await expect(runs.incrementCounters(runId, { matchesIngested: 1 })).rejects.toThrow("collection run is not eligible");
     const [after] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
     expect(after?.matchesIngested).toBe(row?.matchesIngested);
   });
@@ -139,14 +142,37 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     const [snapshot] = await database.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, runId));
     expect(snapshot?.nextMatchOffset === 10 || snapshot?.nextMatchOffset === 20).toBe(true);
     if (offset.status === "fulfilled") expect(snapshot?.nextMatchOffset).toBe(20);
-    await expect(ladder.setOffset(runId, "private", 30)).rejects.toThrow("eligible");
+    else expect(offset.reason).toMatchObject({ message: "collection run is not eligible" });
+    await expect(ladder.setOffset(runId, "private", 30)).rejects.toThrow("collection run is not eligible");
+    const [after] = await database.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, runId));
+    expect(after?.nextMatchOffset).toBe(snapshot?.nextMatchOffset);
+  });
+
+  it("serializes absolute counter updates against terminal status", async () => {
+    const { CollectionRunRepository } = await import("./collection-runs");
+    const runs = new CollectionRunRepository(database.db);
+    await runs.updateStatus(runId, "RUNNING");
+    const [terminal, counter] = await Promise.allSettled([
+      runs.updateStatus(runId, "COMPLETED"),
+      runs.updateCounters(runId, { matchesDiscovered: 7 })
+    ]);
+    expect(terminal.status).toBe("fulfilled");
+    const [row] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    if (counter.status === "fulfilled") expect(row?.matchesDiscovered).toBe(7);
+    else {
+      expect(counter.reason).toMatchObject({ message: "collection run is not eligible" });
+      expect(row?.matchesDiscovered).toBe(0);
+    }
+    await expect(runs.updateCounters(runId, { matchesDiscovered: 9 })).rejects.toThrow("collection run is not eligible");
+    const [after] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(after?.matchesDiscovered).toBe(row?.matchesDiscovered);
   });
 
   it("rolls back malformed error details without leaking secrets", async () => {
     const { CollectionRunRepository } = await import("./collection-runs");
     const runs = new CollectionRunRepository(database.db);
     const before = await runs.get(runId);
-    await expect(runs.updateStatus(runId, "FAILED", { code: "DISCOVERY_FAILED", puuid: "secret-puuid" } as never)).rejects.toThrow("details");
+    await expect(runs.updateStatus(runId, "FAILED", { code: "DISCOVERY_FAILED", puuid: "secret-puuid" } as never)).rejects.toThrow("invalid collection error details");
     const after = await runs.get(runId);
     expect(after?.status).toBe(before?.status);
     expect(after?.finishedAt).toBe(before?.finishedAt);

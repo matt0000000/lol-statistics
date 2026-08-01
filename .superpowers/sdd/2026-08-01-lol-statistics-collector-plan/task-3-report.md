@@ -93,3 +93,15 @@ Fresh verification:
 - Focused services/integration run — 2 files passed, 1 PostgreSQL file skipped; 7 passed, 9 skipped.
 - Typecheck (database and collector), `bun run db:generate`, and both working-tree/base-range diff checks passed.
 - PostgreSQL attempt again failed at isolated database setup with `ECONNREFUSED 127.0.0.1:5432` (9 integration cases cannot run locally).
+
+## Fix Round 5 (final)
+
+- Added the missing absolute-counter-vs-terminal race and strengthened increment/setOffset races with exact static rejection messages and persisted-state rechecks.
+- Added exact diagnostic code/message assertions for all service categories and malformed error-detail privacy/rollback assertions.
+
+Fresh verification:
+
+- `bunx vitest run` — 14 files passed, 3 PostgreSQL/integration files skipped; 116 tests passed, 16 skipped.
+- Focused services/integration run — 2 files passed, 1 PostgreSQL file skipped; 7 passed, 10 skipped.
+- Database/collector typechecks, `bun run db:generate`, working-tree and `79b3b81..HEAD` diff checks passed.
+- PostgreSQL attempt failed during isolated setup with `ECONNREFUSED 127.0.0.1:5432` (10 integration cases unavailable locally).
