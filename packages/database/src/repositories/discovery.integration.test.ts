@@ -104,4 +104,53 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     expect(await matches.uniqueMatchCount(runId)).toBe(1);
     expect(await matches.uniqueMatchCount(secondRun)).toBe(1);
   });
+
+  it("serializes counter updates against terminal status", async () => {
+    const { CollectionRunRepository } = await import("./collection-runs");
+    const runs = new CollectionRunRepository(database.db);
+    await runs.updateStatus(runId, "RUNNING");
+    const [terminal, counter] = await Promise.allSettled([
+      runs.updateStatus(runId, "COMPLETED"),
+      runs.incrementCounters(runId, { matchesIngested: 1 })
+    ]);
+    const [row] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(row?.status).toBe("COMPLETED");
+    expect(row?.matchesIngested === 0 || row?.matchesIngested === 1).toBe(true);
+    if (counter.status === "fulfilled") expect(row?.matchesIngested).toBe(1);
+    else expect(row?.matchesIngested).toBe(0);
+    expect(terminal.status).toBe("fulfilled");
+    await expect(runs.incrementCounters(runId, { matchesIngested: 1 })).rejects.toThrow("eligible");
+    const [after] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(after?.matchesIngested).toBe(row?.matchesIngested);
+  });
+
+  it("serializes setOffset against terminal status and preserves repeat offsets", async () => {
+    const { CollectionRunRepository } = await import("./collection-runs");
+    const runs = new CollectionRunRepository(database.db);
+    const ladder = new LadderRepository(database.db);
+    await ladder.snapshotLadder(runId, [{ puuid: "private", tier: "EMERALD", rank: "I", queueType: "RANKED_SOLO_5x5" }]);
+    await ladder.setOffset(runId, "private", 10);
+    await ladder.setOffset(runId, "private", 10);
+    const [terminal, offset] = await Promise.allSettled([
+      runs.updateStatus(runId, "COMPLETED"),
+      ladder.setOffset(runId, "private", 20)
+    ]);
+    expect(terminal.status).toBe("fulfilled");
+    const [snapshot] = await database.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, runId));
+    expect(snapshot?.nextMatchOffset === 10 || snapshot?.nextMatchOffset === 20).toBe(true);
+    if (offset.status === "fulfilled") expect(snapshot?.nextMatchOffset).toBe(20);
+    await expect(ladder.setOffset(runId, "private", 30)).rejects.toThrow("eligible");
+  });
+
+  it("rolls back malformed error details without leaking secrets", async () => {
+    const { CollectionRunRepository } = await import("./collection-runs");
+    const runs = new CollectionRunRepository(database.db);
+    const before = await runs.get(runId);
+    await expect(runs.updateStatus(runId, "FAILED", { code: "DISCOVERY_FAILED", puuid: "secret-puuid" } as never)).rejects.toThrow("details");
+    const after = await runs.get(runId);
+    expect(after?.status).toBe(before?.status);
+    expect(after?.finishedAt).toBe(before?.finishedAt);
+    expect(after?.errorDetails).toEqual(before?.errorDetails);
+    expect(JSON.stringify(after)).not.toContain("secret-puuid");
+  });
 });

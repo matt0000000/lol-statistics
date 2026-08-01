@@ -81,3 +81,15 @@ Fix verification:
 - `bun run db:generate` — no schema changes.
 - `git diff --check` and `git diff --check 79b3b8120853654c9c80655cf00664a12a9badbe..HEAD` — clean.
 - PostgreSQL attempt with `TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats bunx vitest run packages/database/src/repositories/discovery.integration.test.ts` — setup failed with `ECONNREFUSED 127.0.0.1:5432`; no database tests can execute locally.
+
+## Fix Round 4
+
+- Added isolated persisted-state proofs for counter/status and setOffset/terminal races, post-terminal rejection, repeated offsets, malformed error-detail rollback/privacy, and cross-run work identity.
+- Added direct `invalid_response` and `invalid_checkpoint` diagnostic assertions alongside `invalid_input` and dependency redaction tests.
+
+Fresh verification:
+
+- `bunx vitest run` — 14 files passed, 3 PostgreSQL/integration files skipped; 116 tests passed, 15 skipped.
+- Focused services/integration run — 2 files passed, 1 PostgreSQL file skipped; 7 passed, 9 skipped.
+- Typecheck (database and collector), `bun run db:generate`, and both working-tree/base-range diff checks passed.
+- PostgreSQL attempt again failed at isolated database setup with `ECONNREFUSED 127.0.0.1:5432` (9 integration cases cannot run locally).

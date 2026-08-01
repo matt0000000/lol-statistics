@@ -33,4 +33,11 @@ describe("discoverMatches", () => {
   it("uses a static invalid_input diagnostic", async () => {
     await expect(discoverMatches({ runId: "", puuid: "secret", coverageStart: new Date(), matchClient: {} as never, repository: {} as never })).rejects.toMatchObject({ code: "invalid_input" });
   });
+
+  it("classifies invalid responses and checkpoints without exposing input", async () => {
+    const badResponse = { listMatchIds: vi.fn().mockResolvedValue(["bad-secret-puuid"]) };
+    await expect(discoverMatches({ runId: "run-1", puuid: "secret-puuid", coverageStart: new Date(), matchClient: badResponse, repository: memoryDiscoveryRepository() })).rejects.toMatchObject({ code: "invalid_response" });
+    const badCheckpoint = { loadOffset: vi.fn().mockResolvedValue(Number.NaN), savePage: vi.fn() };
+    await expect(discoverMatches({ runId: "run-1", puuid: "secret-puuid", coverageStart: new Date(), matchClient: {} as never, repository: badCheckpoint })).rejects.toMatchObject({ code: "invalid_checkpoint" });
+  });
 });
