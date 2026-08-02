@@ -3,7 +3,7 @@
   "queue": "RANKED_SOLO_5x5",
   "entries": [
     {
-      "summonerId": "fixture-summoner-master",
+      "puuid": "fixture-puuid-master",
       "rank": "I",
       "leaguePoints": 321,
       "wins": 30,

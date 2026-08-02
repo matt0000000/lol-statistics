@@ -16,7 +16,7 @@ export type LeagueEntry = z.infer<typeof leagueEntrySchema>;
 
 const rawLeagueFields = {
   leagueId: z.string().min(1).optional(),
-  summonerId: z.string().min(1),
+  puuid: z.string().min(1),
   summonerName: z.string().min(1).optional(),
   rank: z.string().min(1),
   leaguePoints: z.number().int().nonnegative(),
