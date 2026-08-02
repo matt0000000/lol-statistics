@@ -8,7 +8,7 @@ export { SummonerClient } from "./summoner";
 export type { MatchClientOptions, MatchListInput } from "./match";
 export { eligibleTierSchema, leagueEntriesSchema, leagueEntrySchema, leagueResponseSchema } from "./contracts/league";
 export type { EligibleTier, LeagueEntry, LeagueResponse } from "./contracts/league";
-export { matchIdsSchema, matchIdSchema, matchSchema } from "./contracts/match";
+export { matchIdsSchema, matchIdSchema, matchSchema, participantSchema } from "./contracts/match";
 export type { MatchDto, MatchParticipant } from "./contracts/match";
 export { summonerSchema } from "./contracts/summoner";
 export type { SummonerDto } from "./contracts/summoner";

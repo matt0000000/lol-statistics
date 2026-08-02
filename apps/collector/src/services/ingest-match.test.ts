@@ -42,4 +42,26 @@ describe("parseFinalInventory", () => {
     await expect(ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: { info: { participants: [] } } as never, eligiblePlayers: new Map(), catalog, observations: { saveValidatedMatch } })).rejects.toEqual(new IngestMatchError("empty_participants"));
     expect(saveValidatedMatch).not.toHaveBeenCalled();
   });
+
+  it("accepts valid participants and rejects malformed entries independently", async () => {
+    const saveValidatedMatch = vi.fn().mockResolvedValue({ observationsAccepted: 1, observationsRejected: 1, replay: false });
+    const valid = { participantId: 1, puuid: "eligible-puuid", championId: 1, teamPosition: "BOTTOM", win: true, gameEndedInEarlySurrender: false, item0: 0, item1: 0, item2: 0, item3: 0, item4: 0, item5: 0, item6: 0 };
+    await ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: {
+      metadata: { dataVersion: "2", matchId: "TR1_3", participants: ["eligible-puuid", "malformed-puuid"] },
+      info: { platformId: "TR1", queueId: 420, gameVersion: "16.15.1", gameCreation: 1, gameDuration: 1800, participants: [valid, { puuid: "malformed-puuid", win: "unknown" }] }
+    }, eligiblePlayers: new Map([["eligible-puuid", { tier: "EMERALD", division: "I" }]]), catalog, observations: { saveValidatedMatch }});
+    expect(saveValidatedMatch.mock.calls[0]?.[3]).toHaveLength(2);
+    expect(saveValidatedMatch.mock.calls[0]?.[3][0]).toMatchObject({ accepted: true });
+    expect(saveValidatedMatch.mock.calls[0]?.[3][1]).toMatchObject({ accepted: false, reason: "required_field" });
+  });
+
+  it("assigns distinct safe indexes to malformed non-object participants", async () => {
+    const saveValidatedMatch = vi.fn().mockResolvedValue({ observationsAccepted: 0, observationsRejected: 2, replay: false });
+    await ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: {
+      metadata: { dataVersion: "2", matchId: "TR1_4", participants: ["a", "b"] },
+      info: { platformId: "TR1", queueId: 420, gameVersion: "16.15.1", gameCreation: 1, gameDuration: 1800, participants: [null, "not-an-object"] }
+    }, eligiblePlayers: new Map(), catalog, observations: { saveValidatedMatch }});
+    const parsed = saveValidatedMatch.mock.calls[0]?.[3] as Array<{ participantId: number; accepted: boolean }>;
+    expect(parsed.map((part) => part.participantId)).toEqual([1, 2]);
+  });
 });

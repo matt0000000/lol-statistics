@@ -130,6 +130,23 @@ describe.skipIf(!url)("validated participant observations", () => {
     expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(2);
   });
 
+  it("persists mixed malformed-participant rejections atomically and replays without duplicate counters", async () => {
+    const accepted = acceptedParticipants()[0]!;
+    const participants: ParsedParticipant[] = [
+      accepted,
+      { accepted: false, participantId: 9, reason: "required_field" },
+      { accepted: false, participantId: 10, reason: "required_field" }
+    ];
+    const first = await repository.saveValidatedMatch(runId, patchId, matchPayload(), participants);
+    expect(first).toMatchObject({ observationsAccepted: 1, observationsRejected: 2, replay: false });
+    expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(1);
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(2);
+    const replay = await repository.saveValidatedMatch(runId, patchId, matchPayload(), participants);
+    expect(replay).toMatchObject({ observationsAccepted: 1, observationsRejected: 2, replay: true });
+    const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(run).toMatchObject({ matchesIngested: 1, observationsAccepted: 1, observationsRejected: 2 });
+  });
+
   it("allows a rejected canonical match to be re-evaluated and become accepted", async () => {
     const rejected: ParsedParticipant[] = [{ accepted: false, participantId: 1, reason: "rank" }];
     await repository.saveValidatedMatch(runId, patchId, matchPayload(), rejected);

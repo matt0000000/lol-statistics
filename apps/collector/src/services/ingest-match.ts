@@ -1,6 +1,6 @@
 import { evaluateParticipant, toPatchKey, type LadderEligibility, type Role } from "@lol/domain";
 import { aliasesFor, normalizeItemId } from "@lol/item-catalog";
-import type { MatchDto, MatchParticipant } from "@lol/riot-client";
+import { participantSchema, type MatchDto, type MatchParticipant } from "@lol/riot-client";
 import type { ObservationsRepository, ParsedCoreItem, ParsedParticipant } from "@lol/database";
 
 export type CatalogItem = { itemId?: number; id?: number; category: string; normalizedBaseId?: number };
@@ -61,14 +61,38 @@ export class IngestMatchError extends Error {
 
 export async function ingestMatch(input: IngestMatchInput): Promise<IngestMatchResult> {
   if (!input.match?.info || !Array.isArray(input.match.info.participants) || input.match.info.participants.length === 0) throw new IngestMatchError("empty_participants");
-  const remake = input.match.info.participants.some((participant) => participant.gameEndedInEarlySurrender === true);
+  const rawParticipants = input.match.info.participants;
+  const parsedBoundary = rawParticipants.map((raw) => participantSchema.safeParse(raw));
+  const remake = parsedBoundary.some((result) => result.success && result.data.gameEndedInEarlySurrender === true);
   const activePatch = normalizeActivePatch(input.activePatch);
   // Keep malformed active-patch diagnostics inside participant eligibility; do
   // not throw payload-bearing errors before a safe rejected audit is possible.
-  const parsed = input.match.info.participants.map((participant) => parseParticipant(participant, input.match, remake, lookupEligibility(input.eligiblePlayers, participant.puuid), input.catalog, activePatch));
+  const usedParticipantIds = new Set<number>();
+  const parsed = parsedBoundary.map((boundary, index) => {
+    if (!boundary.success) {
+      const participantId = rejectionParticipantId(index, usedParticipantIds);
+      usedParticipantIds.add(participantId);
+      return { accepted: false as const, participantId, reason: "required_field" as const };
+    }
+    const participant = boundary.data;
+    if (usedParticipantIds.has(participant.participantId)) {
+      const participantId = rejectionParticipantId(index, usedParticipantIds);
+      usedParticipantIds.add(participantId);
+      return { accepted: false as const, participantId, reason: "required_field" as const };
+    }
+    usedParticipantIds.add(participant.participantId);
+    return parseParticipant(participant, input.match, remake, lookupEligibility(input.eligiblePlayers, participant.puuid), input.catalog, activePatch);
+  });
   const result = await input.observations.saveValidatedMatch(input.runId, input.patchId, input.match, parsed);
   input.logger?.warn?.({ event: "match_ingested", runId: input.runId, observationsAccepted: result.observationsAccepted, observationsRejected: result.observationsRejected, state: result.observationsAccepted > 0 ? "VALID" : "REJECTED" });
   return result;
+}
+
+/** Allocate a deterministic, collision-free participant index for malformed rows. */
+function rejectionParticipantId(index: number, used: ReadonlySet<number>): number {
+  let value = index + 1;
+  while (used.has(value)) value += 1;
+  return value;
 }
 
 function parseParticipant(participant: MatchParticipant, match: MatchDto, remake: boolean, eligible: LadderEligibility | undefined, catalog: CatalogInput, activePatch: string): ParsedParticipant {

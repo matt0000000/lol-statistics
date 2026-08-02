@@ -50,6 +50,16 @@ for that collection run. Re-evaluation in a later run therefore uses the later
 snapshot, while published aggregate rows retain the rank-at-collection values
 from accepted observations.
 
+Match-level routing, queue, patch, timestamp, and duration fields remain strict
+at the Riot boundary. Participant elements are then validated independently:
+missing or wrongly typed PUUID, win, role, champion, early-surrender, or item
+fields produce one bounded `required_field` rejection while other participants
+continue through eligibility and item normalization. Non-object elements receive
+their deterministic participant-array index for private audit uniqueness; no
+placeholder PUUID or raw payload is stored or logged. A valid early-surrender
+flag still applies the documented remake rule to the match, while a malformed
+early-surrender field is only a participant rejection.
+
 `bun run collector:health -- --json` emits only the active patch, run status,
 stage, data age, safe counters, unknown-item count, and a public error
 category. It does not emit private error details, PUUIDs, request paths,

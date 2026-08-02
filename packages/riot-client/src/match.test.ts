@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MatchClient } from "./match";
-import { matchSchema } from "./contracts/match";
+import { matchSchema, participantSchema } from "./contracts/match";
 import validFixture from "../../../fixtures/riot/match-valid.json";
 import remakeFixture from "../../../fixtures/riot/match-remake.json";
 
@@ -96,6 +96,21 @@ describe("MatchClient", () => {
   it("accepts both ordinary and early-remake fixture payloads", () => {
     expect(matchSchema.parse(validFixture).info.gameDuration).toBe(1800);
     expect(matchSchema.parse(remakeFixture).info.gameDuration).toBe(90);
+  });
+
+  it("keeps match-level validation while allowing a malformed participant through", () => {
+    const malformed = { ...validMatch, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { puuid: "player-b" }] } };
+    expect(matchSchema.parse(malformed).info.participants).toEqual(malformed.info.participants);
+    expect(() => participantSchema.parse(malformed.info.participants[1])).toThrow();
+  });
+
+  it("returns a mixed match when the HTTP parser applies the match schema", async () => {
+    const malformed = { ...validMatch, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { puuid: "player-b", win: "unknown" }] } };
+    const calls: Call[] = [];
+    const http = { getJson<T>(request: Call): Promise<T> { calls.push(request); return Promise.resolve(request.schema.parse(malformed) as T); } };
+    const match = await new MatchClient(http).getMatch("TR1_123");
+    expect(match.info.participants).toEqual(malformed.info.participants);
+    expect(calls).toHaveLength(1);
   });
 
   it("rejects empty participant payloads", () => {
