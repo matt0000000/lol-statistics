@@ -6,6 +6,7 @@ const ALLOWED = new Set([
 ]);
 const SECRET_KEY = /(?:riot.?api.?key|puuid|x.?riot.?token|authorization|request.?path|url|token|password|database.?url|message|error|detail)/i;
 const SECRET_VALUE = /(?:RGAPI[-_A-Za-z0-9.%~]+|puuid[-_A-Za-z0-9.%~]+|bearer\s+[-_A-Za-z0-9.%~]+|\/lol\/[^\s"']+)/gi;
+const DIAGNOSTIC_CODE = /^[A-Z0-9_]{1,64}$/;
 
 export type CollectorLogger = Pick<Logger, "info" | "warn" | "error" | "debug"> & { child: () => CollectorLogger };
 type EventFields = Record<string, unknown>;
@@ -35,7 +36,9 @@ function sanitizeFields(value: unknown): EventFields {
   const result: EventFields = {};
   for (const [key, raw] of Object.entries(value as EventFields)) {
     if (!ALLOWED.has(key) || SECRET_KEY.test(key)) continue;
-    if (typeof raw === "string") result[key] = raw.replace(SECRET_VALUE, "[REDACTED]");
+    if (key === "diagnosticCode") {
+      if (typeof raw === "string" && DIAGNOSTIC_CODE.test(raw)) result[key] = raw;
+    } else if (typeof raw === "string") result[key] = raw.replace(SECRET_VALUE, "[REDACTED]");
     else if (typeof raw === "number" || typeof raw === "boolean" || raw === null) result[key] = raw;
   }
   return result;

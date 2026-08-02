@@ -32,4 +32,14 @@ describe("collector logger", () => {
     expect(output).not.toContain("do-not-log");
     expect(output).not.toContain("secret failure details");
   });
+
+  it("omits invalid diagnostic codes while preserving a valid PostgreSQL code", () => {
+    const lines: string[] = [];
+    const logger = createCollectorLogger({ write: (line) => lines.push(line) });
+    logger.error({ event: "collection_failed", diagnosticCode: "private-code" });
+    logger.error({ event: "collection_failed", diagnosticCode: "57014" });
+
+    expect(JSON.parse(lines[0])).not.toHaveProperty("diagnosticCode");
+    expect(JSON.parse(lines[1])).toMatchObject({ diagnosticCode: "57014" });
+  });
 });

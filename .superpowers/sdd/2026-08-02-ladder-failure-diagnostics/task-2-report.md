@@ -26,3 +26,16 @@ The extraction is bounded to object nodes, tracks visited nodes to terminate cyc
 ## Concerns
 
 No known blockers. Full PostgreSQL-backed collection execution was not attempted; focused diagnostics tests, the collector suite, and collector typecheck pass.
+
+## Fix round 1: logger-side diagnostic validation
+
+Review identified that the logger allowlist alone trusted direct callers to provide a safe `diagnosticCode`. Added a field-specific `^[A-Z0-9_]{1,64}$` check at the sanitization boundary. Valid codes such as `57014` are emitted unchanged; invalid/private values are omitted, while generic string fields retain their existing secret redaction behavior.
+
+- RED: `bunx vitest run apps/collector/src/logger.test.ts apps/collector/src/pipeline.test.ts` — the new invalid-code test failed because `private-code` was emitted by the allowlist.
+- GREEN: `bunx vitest run apps/collector/src/logger.test.ts apps/collector/src/pipeline.test.ts` — 2 files passed, 9 tests passed.
+- Typecheck: `bunx tsc --noEmit -p apps/collector/tsconfig.json` — passed.
+- Diff check: `git diff --check` — passed before commit.
+
+## Fix round 1 concerns
+
+No known blockers. The logger now independently enforces the diagnostic-code contract for direct callers.
