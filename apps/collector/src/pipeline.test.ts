@@ -68,6 +68,24 @@ describe("resumable collection pipeline", () => {
     expect(exitCodeForError(new Error("wrapped", { cause: { category: "rate_limit" } }))).toBe(4);
   });
 
+  it("includes a sanitized diagnostic code from a wrapped terminal failure", async () => {
+    const current = harness();
+    const logger = { error: vi.fn() };
+    current.dependencies.logger = logger;
+    current.handlers.CATALOG.mockImplementation(async () => {
+      throw new Error("outer wrapper", { cause: { code: "57014" } });
+    });
+
+    await expect(runCollection(current.dependencies)).rejects.toThrow("outer wrapper");
+    expect(logger.error).toHaveBeenCalledWith({
+      event: "collection_failed",
+      runId: "run-1",
+      stage: "CATALOG",
+      category: "unknown",
+      diagnosticCode: "57014"
+    });
+  });
+
   it("resolves the current patch before selecting a resumable run", async () => {
     const events: string[] = [];
     const current = harness();

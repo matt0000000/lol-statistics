@@ -70,7 +70,14 @@ export async function runCollection(dependencies: PipelineDependencies): Promise
       const category = classifyFailure(error);
       const detail = privateFailureDetail(error);
       await dependencies.runs.markFailed?.(run.id, category, detail, activeStage);
-      dependencies.logger?.error?.({ event: "collection_failed", runId: run.id, stage: activeStage, category });
+      const diagnosticCode = terminalDiagnosticCode(error);
+      dependencies.logger?.error?.({
+        event: "collection_failed",
+        runId: run.id,
+        stage: activeStage,
+        category,
+        ...(diagnosticCode ? { diagnosticCode } : {})
+      });
       throw error;
     }
   };
@@ -108,6 +115,19 @@ function privateFailureDetail(error: unknown): Record<string, unknown> {
   if (typeof candidate.status === "number" && Number.isSafeInteger(candidate.status)) detail.status = candidate.status;
   if (typeof candidate.code === "string" && /^[A-Z0-9_]{1,64}$/.test(candidate.code)) detail.code = candidate.code;
   return detail;
+}
+
+function terminalDiagnosticCode(error: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    if (typeof current !== "object") break;
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (typeof candidate.code === "string" && /^[A-Z0-9_]{1,64}$/.test(candidate.code)) return candidate.code;
+    current = candidate.cause;
+  }
+  return undefined;
 }
 
 function currentStage(run: PipelineRun): CollectionStage {

@@ -2,7 +2,7 @@ import pino, { type Logger } from "pino";
 
 const ALLOWED = new Set([
   "runId", "stage", "endpointCategory", "host", "responseStatus", "attempt", "duration", "aggregateCount",
-  "matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected", "unknownItemCount", "category", "event"
+  "matchesDiscovered", "matchesIngested", "observationsAccepted", "observationsRejected", "unknownItemCount", "category", "event", "diagnosticCode"
 ]);
 const SECRET_KEY = /(?:riot.?api.?key|puuid|x.?riot.?token|authorization|request.?path|url|token|password|database.?url|message|error|detail)/i;
 const SECRET_VALUE = /(?:RGAPI[-_A-Za-z0-9.%~]+|puuid[-_A-Za-z0-9.%~]+|bearer\s+[-_A-Za-z0-9.%~]+|\/lol\/[^\s"']+)/gi;
