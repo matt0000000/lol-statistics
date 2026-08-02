@@ -59,7 +59,6 @@ const itemSchema = z.object({
   from: z.array(z.string()).default([]),
   tags: z.array(z.string()).default([]),
   maps: z.record(z.string(), z.boolean()).default({}),
-  purchasable: z.boolean(),
   image: imageSchema
 });
 

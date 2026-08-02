@@ -49,6 +49,30 @@ describe("DataDragonClient", () => {
     expect(result.items[0].id).toBe(3031);
   });
 
+  it("accepts canonical items with purchasability only under gold", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          "3031": {
+            name: "Ebedi Kılıç",
+            description: "",
+            gold: { base: 725, total: 3500, sell: 2450, purchasable: true },
+            into: [],
+            from: [],
+            tags: ["Damage"],
+            maps: { "11": true },
+            image: { full: "3031.png" }
+          }
+        }
+      })));
+
+    const result = await new DataDragonClient(fetcher).fetchTrCatalog();
+
+    expect(result.items[0]).toMatchObject({ id: 3031, gold: { purchasable: true } });
+  });
+
   it("rejects a catalog record whose key is not a numeric item id", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ v: "16.15.1", dd: "16.15.1", l: "tr_TR", cdn: "https://ddragon.leagueoflegends.com/cdn" })))

@@ -31,6 +31,20 @@ describe("classifyItem", () => {
     expect(classifyItem(completedBoots, {})).toMatchObject({ category: "BOOTS" });
   });
 
+  it("uses gold.purchasable as the canonical purchasability signal", () => {
+    const unavailable = {
+      ...items.data["6672"],
+      id: 6672,
+      purchasable: true,
+      gold: { ...items.data["6672"].gold, purchasable: false }
+    };
+
+    expect(classifyItem(unavailable, {})).toMatchObject({
+      category: "EXCLUDED_UNKNOWN",
+      reason: "not purchasable"
+    });
+  });
+
   it("classifies the 16.15 upgraded boots fixture separately from core items", () => {
     const upgradedBoots = { ...items.data["3172"], id: 3172 };
     expect(classifyItem(upgradedBoots, { 3172: "BOOTS" })).toMatchObject({

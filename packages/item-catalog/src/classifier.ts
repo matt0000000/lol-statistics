@@ -39,7 +39,7 @@ export function classifyItem(
   if (item.into && item.into.length > 0) {
     return { category: "EXCLUDED_COMPONENT", reason: "builds into another item" };
   }
-  if (!item.purchasable) {
+  if (!item.gold.purchasable) {
     return { category: "EXCLUDED_UNKNOWN", reason: "not purchasable" };
   }
   if (item.gold.total <= 500) {
