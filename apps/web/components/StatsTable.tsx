@@ -54,9 +54,9 @@ export function StatsTable({ response, basePath = `/champions/${encodeURICompone
           </div></td>
           <td data-label={labels.adjusted}>{row.adjustedScore === null ? "—" : formatPercent(row.adjustedScore)}</td>
           <td data-label={labels.winRate}>{formatPercent(row.rawWinRate)}</td>
+          <td data-label="Baseline delta" className={styles.baseline}>{formatDelta(row.baselineDelta)}</td>
           <td data-label={labels.buildRate}>{formatPercent(row.buildRate)}</td>
           <td data-label={labels.sample}>{formatGames(row.sample)}</td>
-          <td data-label="Baseline delta" className={styles.baseline}>{formatDelta(row.baselineDelta)}</td>
           <td data-label="95% CI">95% CI {formatInterval(row.confidenceLower, row.confidenceUpper)}</td>
           <td data-label="Confidence" className={`${styles.confidence} ${row.confidence === "recommended" ? styles.recommended : styles.low}`}>{row.confidence === "recommended" ? "Recommended" : "Low confidence"}</td>
         </tr>)}</tbody>

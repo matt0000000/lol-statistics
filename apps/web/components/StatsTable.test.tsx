@@ -37,6 +37,28 @@ describe("StatsTable", () => {
     expect(screen.getByLabelText("Infinity Edge")).toBeVisible();
   });
 
+  it("keeps rendered header labels, data-labels, and values aligned for every column", () => {
+    render(<StatsTable response={response} />);
+    const table = screen.getByRole("table", { name: "Jinx BOTTOM statistics, patch 16.16.1, items" });
+    const headers = Array.from(table.querySelectorAll("thead th"), (header) => header.textContent?.trim());
+    const cells = Array.from(table.querySelectorAll("tbody tr:first-child td"));
+    expect(headers).toEqual(["Build", "Adjusted score", "Win rate", "Baseline delta", "Build rate", "Sample games", "95% CI", "Confidence"]);
+    expect(cells.map((cell) => ({
+      label: cell.getAttribute("data-label"),
+      value: cell.textContent?.replace(/\s+/g, " ").trim()
+    }))).toEqual([
+      { label: "Build", value: "Infinity Edge" },
+      { label: "Adjusted score", value: "45.2%" },
+      { label: "Win rate", value: "55.0%" },
+      { label: "Baseline delta", value: "−5.0 pp" },
+      { label: "Build rate", value: "10.0%" },
+      { label: "Sample games", value: "100 games" },
+      { label: "95% CI", value: "95% CI 45.2%–64.4%" },
+      { label: "Confidence", value: "Recommended" }
+    ]);
+    expect(cells.map((cell) => cell.getAttribute("data-label"))).toEqual(headers);
+  });
+
   it("distinguishes no recommended rows from no rows", () => {
     const noRecommended = publicStatsResponseSchema.parse({ ...response, includeLowConfidence: false, rows: [] });
     render(<StatsTable response={noRecommended} />);
