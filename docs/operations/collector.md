@@ -46,8 +46,13 @@ active patch, so a new ladder snapshot can re-evaluate rank/eligibility and
 promote the match to `VALID` without duplicating accepted participant
 observations. Rejected participant rows in a `VALID` canonical match are
 immutable for that payload: a changed partial-valid replay fails closed and
-marks the run failed; it is not an automatic repair. All-rejected matches may
-be re-evaluated in a later run. Within one run, the discovered-match checkpoint
+marks the run failed; it is not an automatic repair. Same-patch refreshes
+preserve the active publication; a patch rollover intentionally warms a new
+patch's canonical and aggregate data before publication. For an all-rejected
+canonical match, a later run may replace participant rejection rows when the
+deterministic audit reasons change, incrementing the new run's rejection
+counters once. All-rejected matches may be re-evaluated in a later run. Within
+one run, the discovered-match checkpoint
 is marked processed after ingestion (including deterministic rejection or an
 out-of-patch payload), preventing endless retries after a crash. A crash
 before that checkpoint or before a match row is committed may cause one

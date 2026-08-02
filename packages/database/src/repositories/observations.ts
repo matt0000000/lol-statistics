@@ -34,6 +34,22 @@ export type IngestMatch = {
 
 export type IngestResult = { observationsAccepted: number; observationsRejected: number; replay: boolean };
 
+/** Decide whether a rejected-only canonical audit may be refreshed by a later run. */
+export function rejectedRefreshAllowed(input: {
+  existingValidationState: string;
+  hasAcceptedCanonicalRows: boolean;
+  incomingAcceptedCount: number;
+  currentRunStartedAt: Date | null | undefined;
+  latestRejectionCreatedAt: Date | null | undefined;
+}): boolean {
+  return input.existingValidationState === "REJECTED"
+    && !input.hasAcceptedCanonicalRows
+    && input.incomingAcceptedCount === 0
+    && input.currentRunStartedAt instanceof Date
+    && input.latestRejectionCreatedAt instanceof Date
+    && input.currentRunStartedAt.getTime() > input.latestRejectionCreatedAt.getTime();
+}
+
 /** Canonical persistence boundary for one match. All writes happen in one transaction. */
 export class ObservationsRepository {
   constructor(private readonly db: any) {}
@@ -63,6 +79,7 @@ export class ObservationsRepository {
     if (patch.isActive !== true) throw new Error("patch is not active");
     const found = await tx.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, match.metadata.matchId))).limit(1);
     if (!found[0]) throw new Error("match does not belong to collection run");
+    const [run] = await tx.select({ startedAt: collectionRuns.startedAt }).from(collectionRuns).where(eq(collectionRuns.id, runId)).limit(1);
     let matchPatch: string | undefined;
     try { matchPatch = toPatchKey(match.info.gameVersion); } catch {
       matchPatch = undefined;
@@ -93,9 +110,22 @@ export class ObservationsRepository {
       await tx.delete(participantRejections).where(and(eq(participantRejections.matchId, match.metadata.matchId), eq(participantRejections.patchId, patchId)));
       await tx.update(matches).set({ validationState: "VALID", validationError: null }).where(eq(matches.matchId, match.metadata.matchId));
     }
+    const hasAcceptedCanonicalRows = await this.hasAcceptedCanonicalRows(tx, match.metadata.matchId);
     if (await this.hasCanonicalRows(tx, match.metadata.matchId)) {
       if (await this.sameCanonical(tx, match.metadata.matchId, patchId, participants)) {
         return { observationsAccepted: accepted.length, observationsRejected: rejected, replay: true };
+      }
+      const rejectionRows = await tx.select({ createdAt: participantRejections.createdAt }).from(participantRejections).where(eq(participantRejections.matchId, match.metadata.matchId));
+      let latestRejectionCreatedAt: Date | null = null;
+      for (const row of rejectionRows as Array<{ createdAt: Date }>) {
+        const createdAt = new Date(row.createdAt);
+        if (!latestRejectionCreatedAt || createdAt.getTime() > latestRejectionCreatedAt.getTime()) latestRejectionCreatedAt = createdAt;
+      }
+      if (rejectedRefreshAllowed({ existingValidationState: existing.validationState, hasAcceptedCanonicalRows, incomingAcceptedCount: accepted.length, currentRunStartedAt: run?.startedAt, latestRejectionCreatedAt })) {
+        await tx.delete(participantRejections).where(and(eq(participantRejections.matchId, match.metadata.matchId), eq(participantRejections.patchId, patchId)));
+        await tx.insert(participantRejections).values(participants.filter((part): part is Extract<ParsedParticipant, { accepted: false }> => !part.accepted).map((part) => ({ matchId: match.metadata.matchId, participantId: part.participantId, patchId, reason: part.reason })));
+        await tx.update(collectionRuns).set({ matchesIngested: sql`${collectionRuns.matchesIngested} + 1`, observationsRejected: sql`${collectionRuns.observationsRejected} + ${rejected}`, updatedAt: new Date() }).where(eq(collectionRuns.id, runId));
+        return { observationsAccepted: 0, observationsRejected: rejected, replay: false };
       }
       throw new ReplayConflict();
     }
@@ -117,6 +147,11 @@ export class ObservationsRepository {
       tx.select({ participantId: participantRejections.participantId }).from(participantRejections).where(eq(participantRejections.matchId, matchId)).limit(1)
     ]);
     return observation.length > 0 || rejection.length > 0;
+  }
+
+  private async hasAcceptedCanonicalRows(tx: any, matchId: string): Promise<boolean> {
+    const rows = await tx.select({ participantId: participantObservations.participantId }).from(participantObservations).where(eq(participantObservations.matchId, matchId)).limit(1);
+    return rows.length > 0;
   }
 
   private async sameCanonical(tx: any, matchId: string, patchId: number, participants: readonly ParsedParticipant[]): Promise<boolean> {
