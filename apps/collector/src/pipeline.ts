@@ -71,13 +71,17 @@ export async function runCollection(dependencies: PipelineDependencies): Promise
       const detail = privateFailureDetail(error);
       await dependencies.runs.markFailed?.(run.id, category, detail, activeStage);
       const diagnosticCode = terminalDiagnosticCode(error);
-      dependencies.logger?.error?.({
-        event: "collection_failed",
-        runId: run.id,
-        stage: activeStage,
-        category,
-        ...(diagnosticCode ? { diagnosticCode } : {})
-      });
+      try {
+        dependencies.logger?.error?.({
+          event: "collection_failed",
+          runId: run.id,
+          stage: activeStage,
+          category,
+          ...(diagnosticCode ? { diagnosticCode } : {})
+        });
+      } catch {
+        // Terminal diagnostics are best-effort and must not mask the stage failure.
+      }
       throw error;
     }
   };

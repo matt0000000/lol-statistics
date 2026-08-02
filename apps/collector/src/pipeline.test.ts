@@ -86,6 +86,43 @@ describe("resumable collection pipeline", () => {
     });
   });
 
+  it("preserves the original stage failure when terminal logging throws", async () => {
+    const current = harness();
+    const original = Object.assign(new Error("original stage failure"), {
+      category: "auth",
+      status: 401,
+      code: "AUTH_FAILURE"
+    });
+    current.dependencies.logger = { error: () => { throw new Error("logger unavailable"); } };
+    current.handlers.CATALOG.mockRejectedValueOnce(original);
+
+    await expect(runCollection(current.dependencies)).rejects.toBe(original);
+    expect(current.dependencies.runs.markFailed).toHaveBeenCalledWith(
+      "run-1",
+      "auth",
+      { type: "Error", status: 401, code: "AUTH_FAILURE" },
+      "CATALOG"
+    );
+  });
+
+  it("omits invalid cause codes and safely handles cyclic causes", async () => {
+    const current = harness();
+    const logger = { error: vi.fn() };
+    const cause: { code: string; cause?: unknown } = { code: "lowercase", cause: undefined };
+    cause.cause = cause;
+    const original = new Error("cyclic failure", { cause });
+    current.dependencies.logger = logger;
+    current.handlers.CATALOG.mockRejectedValueOnce(original);
+
+    await expect(runCollection(current.dependencies)).rejects.toBe(original);
+    expect(logger.error).toHaveBeenCalledWith({
+      event: "collection_failed",
+      runId: "run-1",
+      stage: "CATALOG",
+      category: "unknown"
+    });
+  });
+
   it("resolves the current patch before selecting a resumable run", async () => {
     const events: string[] = [];
     const current = harness();
