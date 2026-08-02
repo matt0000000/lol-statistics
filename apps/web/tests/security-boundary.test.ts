@@ -19,4 +19,20 @@ describe("web security boundary", () => {
     expect(result.violations.join("\n")).toMatch(/RIOT_API_KEY/);
     expect(result.violations.join("\n")).toMatch(/@lol\/database/);
   });
+
+  it("resolves configured tsconfig aliases across static, dynamic, require, and re-export edges", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-fixtures");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/RIOT_API_KEY/);
+    expect(result.violations.join("\n")).toMatch(/puuid/);
+    expect(result.violations.join("\n")).toMatch(/participant observations/);
+    expect(result.violations.join("\n")).toMatch(/ladder snapshots/);
+    expect(result.violations.join("\n")).toMatch(/private error\/detail/);
+  });
+
+  it("reports an unresolved configured local alias instead of silently skipping it", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-unresolved");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/unresolved alias @missing\//);
+  });
 });

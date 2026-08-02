@@ -60,3 +60,13 @@ The collector must remain separately scheduled (hourly by default) with its
 production Riot credential, rate-limit handling, and PostgreSQL advisory lock.
 The web deployment must not contain a Riot key or any alternate development
 data path.
+
+## E2E and test database safety
+
+Seeding is restricted to an explicitly supplied `TEST_DATABASE_URL`. Its
+PostgreSQL database name must end in `_test`; `DATABASE_READ_URL` and
+`DATABASE_URL` are never used as seed fallbacks. `bun run test:e2e` passes that
+same validated URL to the web process as `DATABASE_READ_URL`, so the browser
+cannot read a different database than the one seeded. The command refuses
+before starting Next or opening a database connection when the variable is
+missing or unsafe.

@@ -1,7 +1,8 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve } from "node:path";
 
 type ImportEdge = { specifier: string; source: string };
+type PathAlias = { pattern: string; targets: string[] };
 export type SecurityScanResult = {
   clientFiles: string[];
   violations: string[];
@@ -47,20 +48,65 @@ function candidatePaths(base: string): string[] {
 async function existingPath(base: string): Promise<string | undefined> {
   for (const candidate of candidatePaths(base)) {
     try {
-      const stat = await import("node:fs/promises").then(({ stat }) => stat(candidate));
-      if (stat.isFile()) return resolve(candidate);
+      const info = await stat(candidate);
+      if (info.isFile()) return resolve(candidate);
     } catch { /* unresolved framework/external import */ }
   }
   return undefined;
 }
 
-async function resolveImport(specifier: string, from: string, workspaceRoot: string): Promise<string | undefined> {
-  if (specifier.startsWith(".")) return existingPath(join(dirname(from), specifier));
+function parseTsconfig(text: string): { baseUrl?: string; paths: PathAlias[] } {
+  const withoutComments = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const parsed = JSON.parse(withoutComments) as { compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> } };
+  const compilerOptions = parsed.compilerOptions ?? {};
+  return {
+    baseUrl: compilerOptions.baseUrl,
+    paths: Object.entries(compilerOptions.paths ?? {}).map(([pattern, targets]) => ({ pattern, targets }))
+  };
+}
+
+async function aliasesFor(root: string): Promise<{ baseUrl: string; aliases: PathAlias[] }> {
+  const configPath = join(root, "tsconfig.json");
+  try {
+    const config = parseTsconfig(await readFile(configPath, "utf8"));
+    return { baseUrl: resolve(root, config.baseUrl ?? "."), aliases: config.paths };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { baseUrl: root, aliases: [] };
+    throw error;
+  }
+}
+
+function aliasTarget(specifier: string, aliases: PathAlias[]): { alias: PathAlias; value: string } | undefined {
+  const matching = aliases
+    .map((alias) => {
+      const star = alias.pattern.indexOf("*");
+      if (star < 0) return alias.pattern === specifier ? { alias, value: "" } : undefined;
+      const prefix = alias.pattern.slice(0, star);
+      const suffix = alias.pattern.slice(star + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) return undefined;
+      return { alias, value: specifier.slice(prefix.length, specifier.length - suffix.length || undefined) };
+    })
+    .filter((match): match is { alias: PathAlias; value: string } => Boolean(match))
+    .sort((left, right) => right.alias.pattern.length - left.alias.pattern.length);
+  return matching[0];
+}
+
+async function resolveImport(specifier: string, from: string, workspaceRoot: string, baseUrl: string, aliases: PathAlias[]): Promise<{ path?: string; unresolvedAlias?: boolean }> {
+  if (specifier.startsWith(".")) return { path: await existingPath(join(dirname(from), specifier)) };
+  const configured = aliasTarget(specifier, aliases);
+  if (configured) {
+    for (const target of configured.alias.targets) {
+      const substituted = target.replace("*", configured.value);
+      const imported = await existingPath(resolve(baseUrl, substituted));
+      if (imported) return { path: imported };
+    }
+    return { unresolvedAlias: true };
+  }
   const packageMatch = /^@lol\/([^/]+)(?:\/(.*))?$/.exec(specifier);
-  if (!packageMatch) return undefined;
+  if (!packageMatch) return { unresolvedAlias: /^(?:[@~]\/|#)/.test(specifier) };
   const packageRoot = join(workspaceRoot, "packages", packageMatch[1]!);
   const suffix = packageMatch[2];
-  return existingPath(suffix ? join(packageRoot, suffix) : join(packageRoot, "src", "index"));
+  return { path: await existingPath(suffix ? join(packageRoot, suffix) : join(packageRoot, "src", "index")) };
 }
 
 function privateMatches(source: string): string[] {
@@ -74,6 +120,7 @@ export async function scanClientBoundary(webRoot: string): Promise<SecurityScanR
   const markerIndex = root.lastIndexOf(appMarker);
   const workspaceRoot = markerIndex >= 0 ? root.slice(0, markerIndex) : resolve(root, "../..");
   const sources = await filesUnder(root, SOURCE_EXTENSIONS, root.endsWith(join("apps", "web")));
+  const { baseUrl, aliases } = await aliasesFor(root);
   const sourceMap = new Map<string, string>();
   for (const file of sources) sourceMap.set(resolve(file), await readFile(file, "utf8"));
   const roots = sources.filter((file) => /^\s*["']use client["'];?/m.test(sourceMap.get(resolve(file))!));
@@ -90,8 +137,9 @@ export async function scanClientBoundary(webRoot: string): Promise<SecurityScanR
       if (/@lol\/(?:database|collector)(?:\/|$)|(?:^|[/\\])(?:database|collector)(?:[/\\]|$)/i.test(edge.specifier)) {
         violations.push(`${relative(workspaceRoot, canonical)} imports forbidden ${edge.specifier}`);
       }
-      const imported = await resolveImport(edge.specifier, canonical, workspaceRoot);
-      if (imported) await visit(imported);
+      const resolution = await resolveImport(edge.specifier, canonical, workspaceRoot, baseUrl, aliases);
+      if (resolution.unresolvedAlias) violations.push(`${relative(workspaceRoot, canonical)} has unresolved alias ${edge.specifier}`);
+      if (resolution.path) await visit(resolution.path);
     }
   };
   for (const file of roots) await visit(file);

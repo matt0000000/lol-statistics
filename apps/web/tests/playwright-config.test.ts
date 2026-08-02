@@ -11,4 +11,11 @@ describe("Playwright server isolation", () => {
     const databaseUrl = process.env.DATABASE_READ_URL ?? process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
     if (databaseUrl) expect(server?.env).toHaveProperty("DATABASE_READ_URL", databaseUrl);
   });
+
+  it("does not configure a web server database from a read or production fallback", () => {
+    const server = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+    expect(server?.command).toMatch(/validate-e2e-env/);
+    expect(server?.env).not.toHaveProperty("DATABASE_READ_URL", process.env.DATABASE_URL);
+    expect(server?.env).not.toHaveProperty("DATABASE_READ_URL", process.env.DATABASE_READ_URL);
+  });
 });

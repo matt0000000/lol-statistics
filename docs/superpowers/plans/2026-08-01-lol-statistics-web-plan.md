@@ -625,10 +625,10 @@ bun install --frozen-lockfile
 docker compose up -d postgres
 docker compose exec -T postgres createdb -U lol lol_stats_test
 DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run db:migrate
-DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test DATABASE_READ_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run seed:e2e
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run seed:e2e
 TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run test
 bun run typecheck
-DATABASE_READ_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run test:e2e
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run test:e2e
 DATABASE_READ_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run build
 ```
 

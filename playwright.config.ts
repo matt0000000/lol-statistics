@@ -1,12 +1,14 @@
 import { defineConfig } from "@playwright/test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateTestDatabaseUrl } from "./apps/web/tests/seed-e2e";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 const requestedPort = Number.parseInt(process.env.E2E_PORT ?? "4173", 10);
 const port = Number.isInteger(requestedPort) && requestedPort > 1024 && requestedPort < 65_536 && requestedPort !== 3000 ? requestedPort : 4173;
 const baseURL = `http://127.0.0.1:${port}`;
-const databaseReadUrl = process.env.DATABASE_READ_URL ?? process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+const validatedDatabaseUrl = testDatabaseUrl ? validateTestDatabaseUrl(testDatabaseUrl).toString() : undefined;
 
 export default defineConfig({
   testDir: join(projectRoot, "e2e"),
@@ -21,7 +23,7 @@ export default defineConfig({
     trace: "retain-on-failure"
   },
   webServer: {
-    command: `bun --filter @lol/web dev -- --port ${port}`,
+    command: `bun apps/web/tests/validate-e2e-env.ts && bun --filter @lol/web dev -- --port ${port}`,
     url: baseURL,
     // E2E must always verify the server started by this run. Reusing an
     // arbitrary development server makes DB fixture state and code revision
@@ -32,7 +34,7 @@ export default defineConfig({
       ...process.env,
       PORT: String(port),
       PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL ?? baseURL,
-      ...(databaseReadUrl ? { DATABASE_READ_URL: databaseReadUrl } : {})
+      ...(validatedDatabaseUrl ? { DATABASE_READ_URL: validatedDatabaseUrl } : {})
     }
   }
 });

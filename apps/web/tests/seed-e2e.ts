@@ -5,10 +5,7 @@ export type SeedEnvironment = Record<string, string | undefined>;
 type SeedInput = SeedEnvironment | string;
 
 /** Validate before creating a socket: this command may only target an explicit test database. */
-export function validateSeedEnvironment(env: SeedEnvironment = process.env): URL {
-  if (env.NODE_ENV !== "test") throw new Error("seed:e2e refuses to run unless NODE_ENV=test");
-  const rawUrl = env.TEST_DATABASE_URL ?? env.DATABASE_URL;
-  if (!rawUrl) throw new Error("seed:e2e requires TEST_DATABASE_URL or DATABASE_URL");
+export function validateTestDatabaseUrl(rawUrl: string): URL {
   let url: URL;
   try { url = new URL(rawUrl); } catch { throw new Error("seed:e2e requires a valid PostgreSQL URL"); }
   if (!["postgres:", "postgresql:"].includes(url.protocol)) throw new Error("seed:e2e requires a PostgreSQL URL");
@@ -21,8 +18,15 @@ export function validateSeedEnvironment(env: SeedEnvironment = process.env): URL
   return url;
 }
 
+export function validateSeedEnvironment(env: SeedEnvironment = process.env): URL {
+  if (env.NODE_ENV !== "test") throw new Error("seed:e2e refuses to run unless NODE_ENV=test");
+  const rawUrl = env.TEST_DATABASE_URL;
+  if (!rawUrl) throw new Error("seed:e2e requires TEST_DATABASE_URL");
+  return validateTestDatabaseUrl(rawUrl);
+}
+
 function environmentOf(input: SeedInput): SeedEnvironment {
-  return typeof input === "string" ? { ...process.env, DATABASE_URL: input } : input;
+  return typeof input === "string" ? { ...process.env, TEST_DATABASE_URL: input } : input;
 }
 
 function fixtureState(environment: SeedEnvironment): E2EFixtureState {

@@ -5,6 +5,7 @@
 !.env.example
 node_modules/
 .next/
+apps/web/next-env.d.ts
 coverage/
 playwright-report/
 blob-report/

@@ -11,10 +11,18 @@ describe("E2E seed safety", () => {
   });
 
   it("rejects a non-test environment before opening a connection", async () => {
-    await expect(seedE2E({ NODE_ENV: "production", DATABASE_URL: "postgres://localhost/lol_stats_test" })).rejects.toThrow(/NODE_ENV=test/);
+    await expect(seedE2E({ NODE_ENV: "production", TEST_DATABASE_URL: "postgres://localhost/lol_stats_test" })).rejects.toThrow(/NODE_ENV=test/);
   });
 
   it("rejects a production database even when the URL has a test-looking query", async () => {
-    await expect(seedE2E({ NODE_ENV: "test", DATABASE_URL: "postgres://localhost/lol_stats?db=lol_stats_test" })).rejects.toThrow(/_test/);
+    await expect(seedE2E({ NODE_ENV: "test", TEST_DATABASE_URL: "postgres://localhost/lol_stats?db=lol_stats_test" })).rejects.toThrow(/_test/);
+  });
+
+  it("requires TEST_DATABASE_URL and never falls back to read or production URLs", () => {
+    expect(() => validateSeedEnvironment({
+      NODE_ENV: "test",
+      DATABASE_READ_URL: "postgres://localhost/lol_stats_test",
+      DATABASE_URL: "postgres://localhost/lol_stats_test"
+    })).toThrow(/TEST_DATABASE_URL/);
   });
 });
