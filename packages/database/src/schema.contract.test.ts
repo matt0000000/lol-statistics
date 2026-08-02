@@ -85,10 +85,26 @@ describe("canonical schema integrity contract", () => {
   it("models processed discovery rows with an exact reason-state constraint", () => {
     expect(source).toContain('pgEnum("discovered_match_status", ["PENDING", "PROCESSED", "UNAVAILABLE"])');
     expect(source).toContain("discovered_matches_unavailable_reason_state");
-    expect(processedMigration).toMatch(/ADD VALUE 'PROCESSED'/);
-    expect(processedMigration).toContain('DROP CONSTRAINT IF EXISTS "discovered_matches_unavailable_reason_state"');
+    expect(processedMigration).not.toMatch(/ALTER\s+TYPE[\s\S]*ADD\s+VALUE/i);
+    expect(processedMigration).not.toMatch(/IF\s+NOT\s+EXISTS/i);
+    const dropConstraint = processedMigration.indexOf('DROP CONSTRAINT "discovered_matches_unavailable_reason_state"');
+    const dropDefault = processedMigration.indexOf('ALTER COLUMN "status" DROP DEFAULT');
+    const createEnum = processedMigration.indexOf('CREATE TYPE "public"."discovered_match_status_new" AS ENUM');
+    const alterStatus = processedMigration.indexOf('ALTER COLUMN "status" TYPE "public"."discovered_match_status_new"');
+    const dropEnum = processedMigration.indexOf('DROP TYPE "public"."discovered_match_status"');
+    const renameEnum = processedMigration.indexOf('RENAME TO "discovered_match_status"');
+    const restoreDefault = processedMigration.indexOf('ALTER COLUMN "status" SET DEFAULT');
+    const restoreConstraint = processedMigration.indexOf('ADD CONSTRAINT "discovered_matches_unavailable_reason_state"');
+    expect([dropConstraint, dropDefault, createEnum, alterStatus, dropEnum, renameEnum, restoreDefault, restoreConstraint].every((index) => index >= 0)).toBe(true);
+    expect(dropConstraint).toBeLessThan(dropDefault);
+    expect(dropDefault).toBeLessThan(createEnum);
+    expect(createEnum).toBeLessThan(alterStatus);
+    expect(alterStatus).toBeLessThan(dropEnum);
+    expect(dropEnum).toBeLessThan(renameEnum);
+    expect(renameEnum).toBeLessThan(restoreDefault);
+    expect(restoreDefault).toBeLessThan(restoreConstraint);
     expect(processedMigration).toMatch(/status[\s\S]*UNAVAILABLE[\s\S]*unavailable_reason[\s\S]*IS NOT NULL/);
-    expect(processedMigration).toMatch(/status"?\s*IN \('PENDING', 'PROCESSED'\)[\s\S]*unavailable_reason[\s\S]*IS NULL/);
+    expect(processedMigration).toMatch(/status"?\s*IN\s*\('PENDING'[^)]*'PROCESSED'[^)]*\)[\s\S]*unavailable_reason[\s\S]*IS NULL/);
     expect(migrationMetadata).toContain("discovered_matches_unavailable_reason_state");
   });
 
