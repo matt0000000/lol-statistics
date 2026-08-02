@@ -20,7 +20,7 @@ export default async function HomePage() {
         <h1>Know the build.<br /><em>Play the matchup.</em></h1>
         <p className="hero-copy">A clear read on champion builds from the current published dataset. Choose a champion, then choose the role you actually play.</p>
       </header>
-      <ChampionGrid champions={champions} meta={meta} warming={warming} state={freshnessState} />
+      <ChampionGrid champions={champions} meta={meta} state={freshnessState} />
     </main>
   );
 }

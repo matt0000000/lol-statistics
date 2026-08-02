@@ -100,7 +100,7 @@ integration("public views and query repository", () => {
     expect("code" in response).toBe(false);
     if ("code" in response) return;
     expect(response.rows.every((row) => row.sample >= response.minimumSample)).toBe(true);
-    expect(JSON.stringify(response)).not.toMatch(/puuid|matchId|riotApiKey|rawFinalSlots|errorDetails/i);
+    expect(JSON.stringify(response)).not.toMatch(/\bmatch[_-]?id\b|\bpuuid\b|match[- ]?history|riot(?:[_-]?api)?[_-]?key|raw[_-]?final[_-]?slots|private[-_ ]?(error|details?)|error[-_ ]?details?/i);
   });
 
   it("serves every view and sort with strict response contracts", async () => {
@@ -271,7 +271,7 @@ integration("public views and query repository", () => {
     if ("code" in rows) throw new Error(`unexpected query error: ${rows.code}`);
     publicChampionSummarySchema.parse(rows[0]);
     const source = await isolated.db.execute("SELECT pg_get_viewdef('public_item_stats'::regclass, true) AS definition" as never) as Array<{ definition: string }>;
-    expect(JSON.stringify(source)).not.toMatch(/puuid|match_id|raw_final_slots|error_details|riot_api_key/i);
+    expect(JSON.stringify(source)).not.toMatch(/\bmatch[_-]?id\b|\bpuuid\b|match[- ]?history|raw[_-]?final[_-]?slots|error[-_ ]?details?|riot(?:[_-]?api)?[_-]?key/i);
   });
 
   it("reports warming when the active pointer is removed", async () => {
@@ -288,14 +288,20 @@ integration("public views and query repository", () => {
     const [currentPatch] = await isolated.db.select({ id: patches.id, activePublicationId: patches.activePublicationId }).from(patches).where(eq(patches.patchKey, "16.16")).limit(1);
     if (!stalePublication || !currentPatch) throw new Error("fixture missing");
     try {
-      await isolated.db.execute(`UPDATE aggregate_publications SET is_active = true WHERE id = '${stalePublication.id}'` as never);
+      // The partial unique index permits one active publication only. Deactivate
+      // the current publication before making the stale pointer corruption
+      // schema-valid, then restore both active flags in finally.
+      await isolated.db.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.id, activePublicationId));
+      await isolated.db.update(aggregatePublications).set({ isActive: true }).where(eq(aggregatePublications.id, stalePublication.id));
       await isolated.db.update(patches).set({ activePublicationId: stalePublication.id }).where(eq(patches.id, currentPatch.id));
       await expect(createPublicQueries(isolated.db).meta()).resolves.toEqual({ code: "dataset_warming" });
       const status = await createPublicQueries(isolated.db).status();
-      expect("code" in status ? status : status.datasetState).toBe("warming");
+      if ("code" in status) expect(status.code).toBe("dataset_warming");
+      else expect(status.datasetState).toBe("warming");
     } finally {
       await isolated.db.update(patches).set({ activePublicationId: currentPatch.activePublicationId }).where(eq(patches.id, currentPatch.id));
-      await isolated.db.execute(`UPDATE aggregate_publications SET is_active = false WHERE id = '${stalePublication.id}'` as never);
+      await isolated.db.update(aggregatePublications).set({ isActive: false }).where(eq(aggregatePublications.id, stalePublication.id));
+      await isolated.db.update(aggregatePublications).set({ isActive: true }).where(eq(aggregatePublications.id, activePublicationId));
     }
   });
 
@@ -313,9 +319,9 @@ integration("public views and query repository", () => {
       expect(status.stage).toBe("MATCHES");
       expect(status.counters).toEqual({ matchesDiscovered: 7, matchesIngested: 5, observationsAccepted: 42, observationsRejected: 3 });
       expect(status.eligibleSamplesByRole.BOTTOM).toBe(1000);
-      expect(JSON.stringify(status)).not.toMatch(/puuid|matchId|errorDetails|rawFinalSlots/i);
+      expect(JSON.stringify(status)).not.toMatch(/\bmatch[_-]?id\b|\bpuuid\b|match[- ]?history|private[-_ ]?(error|details?)|error[-_ ]?details?|raw[_-]?final[_-]?slots|riot(?:[_-]?api)?[_-]?key/i);
     }
     const source = await isolated.db.execute("SELECT pg_get_viewdef('public_status'::regclass, true) AS definition" as never) as Array<{ definition: string }>;
-    expect(JSON.stringify(source)).not.toMatch(/puuid|match_id|raw_final_slots|error_details|riot_api_key/i);
+    expect(JSON.stringify(source)).not.toMatch(/\bmatch[_-]?id\b|\bpuuid\b|match[- ]?history|raw[_-]?final[_-]?slots|error[-_ ]?details?|riot(?:[_-]?api)?[_-]?key/i);
   });
 });

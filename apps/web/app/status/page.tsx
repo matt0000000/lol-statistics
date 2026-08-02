@@ -6,12 +6,7 @@ export const dynamic = "force-dynamic";
 
 function dateLabel(value: string | null): string { return value ? new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC" : "Not published"; }
 
-export default async function StatusPage() {
-  let status: PublicStatus | null = null;
-  try {
-    const result = await productionPublicQueries().status();
-    if (result && !("code" in result)) status = result;
-  } catch { status = null; }
+export function StatusPageContent({ status }: { status: PublicStatus | null }) {
   return (
     <main className="site-shell content-page">
       <p className="eyebrow">Public system status</p><h1>Dataset status</h1>
@@ -22,4 +17,9 @@ export default async function StatusPage() {
       </> : <section className="state-page" role="status"><h2>Current patch is warming up</h2><p>The current TR1 patch is being collected and validated. No private collector details are shown here.</p></section>}
     </main>
   );
+}
+
+export default async function StatusPage() {
+  const result = await productionPublicQueries().status();
+  return <StatusPageContent status={"code" in result ? null : result} />;
 }

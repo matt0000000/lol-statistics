@@ -60,9 +60,9 @@ describe("ChampionGrid", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("shows warming copy instead of search-empty copy while no dataset exists", async () => {
+  it("derives warming copy from the authoritative state while no dataset exists", async () => {
     const user = userEvent.setup();
-    render(<ChampionGrid champions={[]} warming state="warming" />);
+    render(<ChampionGrid champions={[]} state="warming" />);
     await user.type(screen.getByRole("searchbox", { name: "Search champions" }), "jinx");
     expect(screen.getByText(/current-patch data is warming up/i)).toBeVisible();
     expect(screen.queryByText("No champions match your search.")).toBeNull();

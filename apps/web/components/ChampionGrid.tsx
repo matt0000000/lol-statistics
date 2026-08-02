@@ -12,8 +12,9 @@ function fold(value: string): string {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-export function ChampionGrid({ champions, meta, warming = false, state }: { champions: PublicChampionSummary[]; meta?: PublicMeta | null; warming?: boolean; state: PublicDatasetState }) {
+export function ChampionGrid({ champions, meta, state }: { champions: PublicChampionSummary[]; meta?: PublicMeta | null; state: PublicDatasetState }) {
   const [query, setQuery] = useState("");
+  const warming = state === "warming";
   const filtered = useMemo(() => {
     const needle = fold(query.trim().slice(0, MAX_SEARCH_LENGTH));
     if (!needle) return champions;
@@ -38,7 +39,7 @@ export function ChampionGrid({ champions, meta, warming = false, state }: { cham
             </Link>
           </li>)}
         </ul>}
-      <DatasetBanner state={warming || !meta ? "warming" : state} publishedAt={meta?.publishedAt} />
+      <DatasetBanner state={state} publishedAt={meta?.publishedAt} />
     </section>
   );
 }

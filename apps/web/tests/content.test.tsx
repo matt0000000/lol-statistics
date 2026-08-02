@@ -2,7 +2,22 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import RootLayout from "../app/layout";
 import MethodologyPage from "../app/methodology/page";
-import StatusPage from "../app/status/page";
+import { StatusPageContent } from "../app/status/page";
+import type { PublicStatus } from "@lol/public-api";
+
+const populatedStatus: PublicStatus = {
+  patch: { version: "16.16.1", key: "16.16" },
+  scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
+  coverageStartedAt: "2026-07-01T00:00:00.000Z",
+  publishedAt: "2026-08-01T10:00:00.000Z",
+  publicationAgeSeconds: 7200,
+  datasetState: "fresh",
+  runStatus: "COMPLETED",
+  stage: "PUBLISH",
+  counters: { matchesDiscovered: 1200, matchesIngested: 1100, observationsAccepted: 900, observationsRejected: 200 },
+  eligibleSamplesByRole: { TOP: 180, JUNGLE: 170, MIDDLE: 190, BOTTOM: 200, UTILITY: 160 },
+  unknownItemCount: 3
+};
 
 describe("public content", () => {
   it("renders the exact Riot legal notice and navigation", () => {
@@ -20,13 +35,17 @@ describe("public content", () => {
     expect(text).not.toMatch(/Arena is supported|Arena data is included/i);
   });
 
-  it("keeps status and methodology content free of private identifiers and diagnostics", async () => {
+  it("renders populated public status and keeps content free of private identifiers", async () => {
     const methodology = render(await MethodologyPage());
     const methodologyText = methodology.container.textContent ?? "";
-    expect(methodologyText).not.toMatch(/puuid|match[- ]history|private error|error details|riot api key|match id/i);
+    const forbidden = /\bmatch[_-]?id\b|\bpuuid\b|match[- ]?history|private[-_ ]?(error|details?)|error[-_ ]?details?|riot(?:[_-]?api)?[_-]?key|raw[_-]?final[_-]?slots/i;
+    expect(methodologyText).not.toMatch(forbidden);
     methodology.unmount();
-    const status = render(await StatusPage());
+    const status = render(<StatusPageContent status={populatedStatus} />);
     const statusText = status.container.textContent ?? "";
-    expect(statusText).not.toMatch(/puuid|match[- ]history|private error|error details|riot api key|match id/i);
+    expect(statusText).toContain("Patch 16.16.1");
+    expect(statusText).toContain("Last successful publication");
+    expect(statusText).toContain("Unknown-item observations");
+    expect(statusText).not.toMatch(forbidden);
   });
 });
