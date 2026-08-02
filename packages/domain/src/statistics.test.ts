@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { calculateAggregateMetrics, wilson95 } from "./statistics";
 
 describe("wilson95", () => {
+  it.each([
+    [0, 1, 0, 0.7934506856227626],
+    [1, 1, 0.20654931437723745, 1],
+    [50, 100, 0.4038315303659956, 0.5961684696340044],
+    [123, 456, 0.23104962756216274, 0.3122712366796905]
+  ])("matches the reference vector %i/%i", (wins, sample, lower, upper) => {
+    expect(wilson95(wins, sample)).toEqual({ lower: expect.closeTo(lower, 14), upper: expect.closeTo(upper, 14) });
+  });
+
   it("calculates the specified 95% interval", () => {
     expect(wilson95(55, 100)).toEqual({ lower: expect.closeTo(0.4524, 4), upper: expect.closeTo(0.6439, 4) });
   });

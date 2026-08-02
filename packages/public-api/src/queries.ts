@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { wilson95 } from "@lol/domain";
+import { WILSON_Z, wilson95 } from "@lol/domain";
 import type {
   PublicChampion,
   PublicChampionSummary,
@@ -40,7 +40,9 @@ const viewNames: Record<StatsView, string> = {
   boots: "public_boots_stats"
 };
 
-const wilsonZ = sql.raw("1.959963984540054");
+// Keep this literal in lockstep with the domain implementation and type it
+// before any arithmetic so PostgreSQL follows IEEE double precision semantics.
+const wilsonZ = sql.raw(`${WILSON_Z}::double precision`);
 const canonicalKey = sql.raw('s.stat_key COLLATE "C"');
 
 function wilsonLowerBoundSql() {

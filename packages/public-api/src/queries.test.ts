@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { SQL } from "drizzle-orm";
+import { wilson95 } from "@lol/domain";
 import { createPublicQueries } from "./queries";
 import { publicStatsResponseSchema } from "./contracts";
+import { compareCanonicalKeys } from "./sort";
 
 const metadata = {
   patch_version: "16.16.1",
@@ -46,6 +48,49 @@ function sqlText(query: SQL): string {
 }
 
 describe("stats query boundary", () => {
+  it("keeps fake SQL cap and JS order aligned for every sort on adversarial ties", async () => {
+    const keys = ["1", "10", "10:20", "1:10", "1:2", "1:20", ...Array.from({ length: 114 }, (_, index) => String(2000 + index))];
+    const sourceRows = keys.map((stat_key, index) => {
+      const sample = index < 105 ? 100 : 99;
+      const wins = index < 105 ? 50 + (index % 3) : 49;
+      return { ...statsRow, stat_key, item_ids: stat_key.split(":").map(Number), wins, losses: sample - wins, sample };
+    });
+    const sqlOrder = (sort: "adjusted" | "winRate" | "buildRate" | "sample") => [...sourceRows].sort((left, right) => {
+      const leftAdjusted = left.sample >= 100 ? wilson95(left.wins, left.sample).lower : null;
+      const rightAdjusted = right.sample >= 100 ? wilson95(right.wins, right.sample).lower : null;
+      if (sort === "adjusted") {
+        if (leftAdjusted === null && rightAdjusted !== null) return 1;
+        if (leftAdjusted !== null && rightAdjusted === null) return -1;
+        if (leftAdjusted !== null && rightAdjusted !== null && leftAdjusted !== rightAdjusted) return rightAdjusted > leftAdjusted ? 1 : -1;
+      } else {
+        const leftValue = sort === "winRate" ? left.wins / left.sample : sort === "buildRate" ? left.sample / 1000 : left.sample;
+        const rightValue = sort === "winRate" ? right.wins / right.sample : sort === "buildRate" ? right.sample / 1000 : right.sample;
+        if (leftValue !== rightValue) return rightValue > leftValue ? 1 : -1;
+      }
+      return right.sample - left.sample || compareCanonicalKeys(left.stat_key, right.stat_key);
+    }).slice(0, 100);
+
+    for (const sort of ["adjusted", "winRate", "buildRate", "sample"] as const) {
+      const expected = sqlOrder(sort).map((row) => row.stat_key);
+      const response = await createPublicQueries({ execute: async () => sqlOrder(sort) }).stats({ championId: 222, role: "BOTTOM", view: "items", sort, includeLowConfidence: true });
+      expect("code" in response).toBe(false);
+      if (!("code" in response)) expect(response.rows.map((row) => row.key)).toEqual(expected);
+    }
+  });
+
+  it("emits typed Wilson arithmetic and C-collated key ordering", async () => {
+    let statement = "";
+    await createPublicQueries({
+      execute: async (query) => {
+        statement = sqlText(query);
+        return [statsRow];
+      }
+    }).stats({ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: true });
+
+    expect(statement).toContain("1.959963984540054::double precision * 1.959963984540054::double precision");
+    expect(statement).toContain('s.stat_key COLLATE "C"');
+  });
+
   it("projects every published champion role into a strict stats response", async () => {
     const queries: string[] = [];
     const response = await createPublicQueries({

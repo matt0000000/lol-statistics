@@ -1,4 +1,5 @@
-const WILSON_Z = 1.959963984540054;
+/** The two-sided 95% Wilson score critical value used by every consumer. */
+export const WILSON_Z = 1.959963984540054;
 
 function assertCount(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
