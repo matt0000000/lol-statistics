@@ -136,7 +136,7 @@ describe.skipIf(!url)("canonical publication activation PostgreSQL", () => {
       ensure = new AggregatesRepository(ensureDatabase.db).ensurePublicationTarget({ runId, patchId, coverageStartedAt: new Date(), minimumSample: 100 });
       await waitForLock(barrierClient, { identity: ensureIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "ensure target lock barrier");
       publish = publishAtomically({ publicationId, runId, database: publishDatabase });
-      await waitForLock(barrierClient, { identity: publishIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "aggregate_publications" }, "publish target lock barrier");
+      await waitForLock(barrierClient, { identity: publishIdentity, waitEvent: ["transactionid", "tuple"], queryFragment: "collection_runs" }, "publish run lock barrier");
     } finally {
       try {
         if (held) await holdClient`ROLLBACK`;
