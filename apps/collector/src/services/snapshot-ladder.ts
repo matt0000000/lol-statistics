@@ -13,14 +13,19 @@ export type SnapshotLadderInput = {
   runId: string;
   leagueClient: { listEligiblePlayers(): Promise<readonly LeagueEntry[]> };
   repository: { snapshotLadder(runId: string, entries: readonly LeagueEntry[]): Promise<void> };
+  logger?: { info?: (fields: Record<string, unknown>) => void };
 };
 
 export async function snapshotLadder(input: SnapshotLadderInput): Promise<void> {
   if (typeof input.runId !== "string" || input.runId.length === 0) throw new SnapshotServiceError("invalid_input");
   try {
+    input.logger?.info?.({ event: "ladder_fetch_started", runId: input.runId, stage: "LADDER" });
     const entries = await input.leagueClient.listEligiblePlayers();
     if (!Array.isArray(entries)) throw new SnapshotServiceError("invalid_response");
+    input.logger?.info?.({ event: "ladder_fetch_completed", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
+    input.logger?.info?.({ event: "ladder_persist_started", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
     await input.repository.snapshotLadder(input.runId, entries);
+    input.logger?.info?.({ event: "ladder_persist_completed", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
   } catch (error) {
     if (error instanceof SnapshotServiceError) throw error;
     throw new SnapshotServiceError("dependency_failure", undefined, { cause: error });

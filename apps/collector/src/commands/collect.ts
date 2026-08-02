@@ -67,7 +67,7 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
             throw Object.assign(new Error("run patch does not match current catalog"), { invariant: true });
           }
         },
-        LADDER: async (run) => snapshotLadder({ runId: run.id, leagueClient: league, repository: ladderRepo }),
+        LADDER: async (run) => snapshotLadder({ runId: run.id, leagueClient: league, repository: ladderRepo, logger }),
         DISCOVERY: async (run) => {
           if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
           const snapshots = await database!.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, run.id));
