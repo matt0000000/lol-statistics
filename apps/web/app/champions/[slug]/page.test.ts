@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PublicChampion, PublicMeta, PublicQueries, PublicStatsResponse } from "@lol/public-api";
+import { publicStatsResponseSchema, type PublicChampion, type PublicMeta, type PublicQueries } from "@lol/public-api";
 import { parseStatsParams, resolveChampionPage } from "./page";
 
 const champion: PublicChampion = { championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://example.test/jinx.png", splashUrl: null, roles: ["BOTTOM", "UTILITY"] };
@@ -22,9 +22,9 @@ function queries(overrides: Partial<PublicQueries> = {}): PublicQueries {
   };
 }
 
-const stats: PublicStatsResponse = {
+const stats = publicStatsResponseSchema.parse({
   meta, champion, role: "BOTTOM", baseline: { wins: 60, losses: 40, sample: 100, winRate: 0.6 }, view: "items", sort: "adjusted", includeLowConfidence: false, minimumSample: 100, rows: []
-};
+});
 
 describe("champion page resolver", () => {
   it("permanently redirects aliases and preserves only a safe single role", async () => {

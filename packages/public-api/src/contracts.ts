@@ -1,4 +1,5 @@
 import z from "zod";
+import { wilson95 } from "@lol/domain";
 
 const finiteNumber = z.number().finite();
 const nonnegativeInteger = z.number().int().nonnegative();
@@ -96,6 +97,12 @@ export const publicStatRowSchema = z.object({
   if (value.confidenceLower > value.confidenceUpper) ctx.addIssue({ code: "custom", message: "confidence interval is inverted", path: ["confidenceLower"] });
   if (value.confidenceLower < 0 || value.confidenceUpper > 1) ctx.addIssue({ code: "custom", message: "confidence interval must be between 0 and 1", path: ["confidenceLower"] });
   if (!approximatelyEqual(value.rawWinRate, value.sample === 0 ? 0 : value.wins / value.sample)) ctx.addIssue({ code: "custom", message: "rawWinRate does not match wins / sample", path: ["rawWinRate"] });
+  if (value.sample > 0 && value.wins <= value.sample) {
+    const expectedInterval = wilson95(value.wins, value.sample);
+    if (!approximatelyEqual(value.confidenceLower, expectedInterval.lower)) ctx.addIssue({ code: "custom", message: "confidenceLower does not match the Wilson lower bound", path: ["confidenceLower"] });
+    if (!approximatelyEqual(value.confidenceUpper, expectedInterval.upper)) ctx.addIssue({ code: "custom", message: "confidenceUpper does not match the Wilson upper bound", path: ["confidenceUpper"] });
+    if (value.adjustedScore !== null && !approximatelyEqual(value.adjustedScore, expectedInterval.lower)) ctx.addIssue({ code: "custom", message: "adjustedScore does not match the Wilson lower bound", path: ["adjustedScore"] });
+  }
   if (value.adjustedScore !== null) {
     if (value.adjustedScore < 0 || value.adjustedScore > 1) ctx.addIssue({ code: "custom", message: "adjustedScore must be between 0 and 1", path: ["adjustedScore"] });
     if (!approximatelyEqual(value.adjustedScore, value.confidenceLower)) ctx.addIssue({ code: "custom", message: "adjustedScore must match the Wilson lower bound", path: ["adjustedScore"] });
@@ -124,6 +131,9 @@ export const publicStatsResponseSchema = z.object({
     if (row.itemIds.length !== expectedLength) ctx.addIssue({ code: "custom", message: `row must contain ${expectedLength} item ids for ${value.view}`, path: ["rows", index, "itemIds"] });
     const recommended = row.sample >= value.minimumSample;
     if ((row.confidence === "recommended") !== recommended) ctx.addIssue({ code: "custom", message: "confidence must match minimum sample", path: ["rows", index, "confidence"] });
+    if (!value.includeLowConfidence && (!recommended || row.confidence === "low")) {
+      ctx.addIssue({ code: "custom", message: "low-confidence rows are not allowed when includeLowConfidence is false", path: ["rows", index] });
+    }
     if (value.baseline.sample === 0) {
       ctx.addIssue({ code: "custom", message: "rows require a positive baseline sample", path: ["baseline", "sample"] });
     } else {

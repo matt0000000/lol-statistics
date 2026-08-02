@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createRouteHandlers, type RouteQueries } from "../lib/api-routes";
-import { createPublicQueries, publicationScopeOf, type PublicChampion, type PublicChampionSummary, type PublicMeta, type PublicMethodology, type PublicStatsResponse } from "@lol/public-api";
+import { createPublicQueries, publicationScopeOf, publicStatsResponseSchema, type PublicChampion, type PublicChampionSummary, type PublicMeta, type PublicMethodology } from "@lol/public-api";
 
 const meta: PublicMeta = {
   patch: { version: "14.1.1", key: "14.1" }, scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
@@ -11,7 +11,7 @@ const meta: PublicMeta = {
 const champion: PublicChampion = { championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://example.test/jinx.png", splashUrl: null, roles: ["BOTTOM"] };
 const summary: PublicChampionSummary = { championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://example.test/jinx.png", roles: ["BOTTOM"] };
 const methodology: PublicMethodology = { version: "1", scope: meta.scope, formulas: { rawWinRate: "wins / sample", buildRate: "sample / baseline", baselineDelta: "raw - baseline", adjustedScore: "Wilson" }, minimumSample: 100, lowConfidence: "hidden", limitations: ["correlation"] };
-const stats: PublicStatsResponse = { meta, champion, role: "BOTTOM", baseline: { wins: 50, losses: 50, sample: 100, winRate: 0.5 }, view: "items", sort: "adjusted", includeLowConfidence: false, minimumSample: 100, rows: [] };
+const stats = publicStatsResponseSchema.parse({ meta, champion, role: "BOTTOM", baseline: { wins: 50, losses: 50, sample: 100, winRate: 0.5 }, view: "items", sort: "adjusted", includeLowConfidence: false, minimumSample: 100, rows: [] });
 
 const trustedScopes = new WeakMap<object, string>();
 trustedScopes.set(meta, "pub-1");
