@@ -65,4 +65,14 @@ describe("web security boundary", () => {
     const result = await scanClientBoundary(root);
     expect(result.violations, result.violations.join("\n")).toEqual([]);
   });
+
+  it("parses JSX and captures multi-argument require and dynamic import edges", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-round4");
+    const result = await scanClientBoundary(root);
+    const output = result.violations.join("\n");
+    expect(output).toMatch(/RIOT_API_KEY/);
+    expect(output).toMatch(/puuid/);
+    expect(output).toMatch(/ladder snapshots/);
+    expect(output).toMatch(/participant observations/);
+  });
 });

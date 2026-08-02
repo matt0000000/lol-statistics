@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@round4/*": ["./nested/*"]
+    }
+  }
+}

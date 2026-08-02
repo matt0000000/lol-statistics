@@ -1,9 +1,11 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 
 type ImportEdge = { specifier: string; source: string };
-type PathAlias = { pattern: string; targets: string[] };
+type ImportParse = { edges: ImportEdge[]; diagnostics: ts.Diagnostic[] };
+type ResolverConfig = { options: ts.CompilerOptions; configPath?: string };
 export type SecurityScanResult = {
   clientFiles: string[];
   violations: string[];
@@ -34,9 +36,20 @@ async function filesUnder(directory: string, extensions: readonly string[], skip
   return files;
 }
 
-function importsOf(source: string, fileName = "module.tsx"): ImportEdge[] {
+function scriptKindFor(fileName: string): ts.ScriptKind {
+  switch (extname(fileName).toLowerCase()) {
+    case ".tsx": return ts.ScriptKind.TSX;
+    case ".jsx": return ts.ScriptKind.JSX;
+    case ".js":
+    case ".mjs":
+    case ".cjs": return ts.ScriptKind.JS;
+    default: return ts.ScriptKind.TS;
+  }
+}
+
+function importsOf(source: string, fileName = "module.tsx"): ImportParse {
   const imports: ImportEdge[] = [];
-  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, scriptKindFor(fileName));
   const add = (specifier: ts.Expression): void => {
     if (ts.isStringLiteralLike(specifier)) imports.push({ specifier: specifier.text, source: specifier.getText(sourceFile) });
   };
@@ -45,13 +58,13 @@ function importsOf(source: string, fileName = "module.tsx"): ImportEdge[] {
       if (node.moduleSpecifier) add(node.moduleSpecifier);
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
       add(node.moduleReference.expression);
-    } else if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0])) {
+    } else if (ts.isCallExpression(node) && node.arguments.length > 0 && ts.isStringLiteralLike(node.arguments[0])) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require")) add(node.arguments[0]);
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  return imports;
+  return { edges: imports, diagnostics: (sourceFile as ts.SourceFile & { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics ?? [] };
 }
 
 function candidatePaths(base: string): string[] {
@@ -83,52 +96,91 @@ function diagnosticText(diagnostic: ts.Diagnostic): string {
   return ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
 }
 
-async function aliasesFor(root: string): Promise<{ baseUrl: string; aliases: PathAlias[]; configPath?: string }> {
+async function configFor(root: string): Promise<ResolverConfig> {
   const configPath = join(root, "tsconfig.json");
-  if (!ts.sys.fileExists(configPath)) return { baseUrl: root, aliases: [] };
+  if (!ts.sys.fileExists(configPath)) return { options: {} };
   try {
     const parsed = ts.readConfigFile(configPath, ts.sys.readFile);
     if (parsed.error) throw new Error(`Invalid tsconfig ${configPath}: ${diagnosticText(parsed.error)}`);
     const config = ts.parseJsonConfigFileContent(parsed.config, ts.sys, resolve(root), undefined, configPath);
     if (config.errors.length > 0) throw new Error(`Invalid tsconfig ${configPath}: ${config.errors.map(diagnosticText).join("; ")}`);
-    const paths = config.options.paths ?? {};
-    return { baseUrl: config.options.baseUrl ?? resolve(root), aliases: Object.entries(paths).map(([pattern, targets]) => ({ pattern, targets })), configPath };
+    return { options: config.options, configPath };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { baseUrl: root, aliases: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { options: {} };
     throw error;
   }
 }
 
-function aliasTarget(specifier: string, aliases: PathAlias[]): { alias: PathAlias; value: string } | undefined {
-  const exact = aliases.find((alias) => !alias.pattern.includes("*") && alias.pattern === specifier);
-  if (exact) return { alias: exact, value: "" };
-  const matching = aliases.flatMap((alias) => {
-    const star = alias.pattern.indexOf("*");
-    if (star < 0) return [];
-    const prefix = alias.pattern.slice(0, star);
-    const suffix = alias.pattern.slice(star + 1);
-    if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix) || specifier.length < prefix.length + suffix.length) return [];
-    return [{ alias, value: specifier.slice(prefix.length, specifier.length - suffix.length || undefined), prefixLength: prefix.length, suffixLength: suffix.length }];
-  });
-  matching.sort((left, right) => right.prefixLength - left.prefixLength || right.suffixLength - left.suffixLength);
-  return matching[0] && { alias: matching[0].alias, value: matching[0].value };
+async function nearestConfig(fileName: string, scanRoot: string, fallback: ResolverConfig, cache: Map<string, Promise<ResolverConfig>>): Promise<ResolverConfig> {
+  let directory = dirname(fileName);
+  while (inside(scanRoot, directory)) {
+    const configPath = join(directory, "tsconfig.json");
+    if (ts.sys.fileExists(configPath)) {
+      let config = cache.get(configPath);
+      if (!config) {
+        config = configFor(directory);
+        cache.set(configPath, config);
+      }
+      return config;
+    }
+    if (directory === scanRoot) break;
+    directory = dirname(directory);
+  }
+  return fallback;
 }
 
-async function resolveImport(specifier: string, from: string, workspaceRoot: string, baseUrl: string, aliases: PathAlias[], allowedRoots: readonly string[]): Promise<{ path?: string; unresolvedAlias?: boolean }> {
+function allowedResolverPath(candidate: string, workspaceRoot: string): boolean {
+  const absolute = resolve(candidate);
+  if (!inside(workspaceRoot, absolute)) return false;
+  if (!absolute.split(sep).includes("node_modules")) return true;
+  try {
+    const canonical = realpathSync.native(absolute);
+    return inside(workspaceRoot, canonical) && !canonical.split(sep).includes("node_modules");
+  } catch { return false; }
+}
+
+function resolverHost(workspaceRoot: string): { host: ts.ModuleResolutionHost; blocked: { value: boolean } } {
+  const blocked = { value: false };
+  const checked = (fileName: string): boolean => {
+    const allowed = allowedResolverPath(fileName, workspaceRoot);
+    if (!allowed && fileName.split(sep).includes("node_modules")) blocked.value = true;
+    return allowed;
+  };
+  return { host: {
+    fileExists: (fileName) => checked(fileName) && ts.sys.fileExists(fileName),
+    readFile: (fileName) => checked(fileName) ? ts.sys.readFile(fileName) : undefined,
+    directoryExists: (directoryName) => checked(directoryName) && ts.sys.directoryExists(directoryName),
+    realpath: (fileName) => {
+      try { return realpathSync.native(fileName); } catch { return fileName; }
+    },
+    getCurrentDirectory: () => workspaceRoot
+  }, blocked };
+}
+
+function configuredPath(specifier: string, options: ts.CompilerOptions): boolean {
+  return Object.keys(options.paths ?? {}).some((pattern) => {
+    const star = pattern.indexOf("*");
+    if (star < 0) return pattern === specifier;
+    return specifier.startsWith(pattern.slice(0, star)) && specifier.endsWith(pattern.slice(star + 1)) && specifier.length >= pattern.length - 1;
+  });
+}
+
+async function resolveImport(specifier: string, from: string, workspaceRoot: string, config: ResolverConfig, allowedRoots: readonly string[]): Promise<{ path?: string; unresolvedAlias?: boolean }> {
+  const resolver = resolverHost(workspaceRoot);
+  const resolved = ts.resolveModuleName(specifier, from, config.options, resolver.host).resolvedModule;
+  if (configuredPath(specifier, config.options) && resolver.blocked.value) return { unresolvedAlias: true };
+  if (resolved) {
+    try {
+      const canonical = await realpath(resolved.resolvedFileName);
+      if (canonical.split(sep).includes("node_modules") || !allowedRoots.some((root) => inside(root, canonical))) return { unresolvedAlias: true };
+      return { path: canonical };
+    } catch { return { unresolvedAlias: true }; }
+  }
   if (specifier.startsWith(".")) {
     const imported = await existingPath(join(dirname(from), specifier), allowedRoots);
     return imported.unsafe ? { unresolvedAlias: true } : { path: imported.path };
   }
-  const configured = aliasTarget(specifier, aliases);
-  if (configured) {
-    for (const target of configured.alias.targets) {
-      const substituted = target.replace("*", configured.value);
-      const imported = await existingPath(isAbsolute(substituted) ? substituted : resolve(baseUrl, substituted), allowedRoots);
-      if (imported.unsafe) return { unresolvedAlias: true };
-      if (imported.path) return { path: imported.path };
-    }
-    return { unresolvedAlias: true };
-  }
+  if (configuredPath(specifier, config.options)) return { unresolvedAlias: true };
   const packageMatch = /^@lol\/([^/]+)(?:\/(.*))?$/.exec(specifier);
   if (!packageMatch) return { unresolvedAlias: /^(?:[@~]\/|#)/.test(specifier) };
   const packageRoot = join(workspaceRoot, "packages", packageMatch[1]!);
@@ -148,7 +200,10 @@ export async function scanClientBoundary(webRoot: string): Promise<SecurityScanR
   const markerIndex = root.lastIndexOf(appMarker);
   const workspaceRoot = markerIndex >= 0 ? root.slice(0, markerIndex) : resolve(root, "../..");
   const sources = await filesUnder(root, SOURCE_EXTENSIONS, root.endsWith(join("apps", "web")));
-  const { baseUrl, aliases } = await aliasesFor(root);
+  const rootConfig = await configFor(root);
+  const configCache = new Map<string, Promise<ResolverConfig>>();
+  const rootConfigPath = rootConfig.configPath;
+  if (rootConfigPath) configCache.set(rootConfigPath, Promise.resolve(rootConfig));
   const canonicalWorkspaceRoot = await realpath(workspaceRoot);
   const allowedRoots = [canonicalWorkspaceRoot];
   const sourceMap = new Map<string, string>();
@@ -163,12 +218,18 @@ export async function scanClientBoundary(webRoot: string): Promise<SecurityScanR
     const source = sourceMap.get(canonical) ?? await readFile(canonical, "utf8").catch(() => undefined);
     if (source === undefined) return;
     for (const label of privateMatches(source)) violations.push(`${relative(workspaceRoot, canonical)} contains ${label}`);
-    for (const edge of importsOf(source, canonical)) {
+    const parsed = importsOf(source, canonical);
+    if (parsed.diagnostics.length > 0) {
+      violations.push(`${relative(workspaceRoot, canonical)} has parse diagnostics`);
+      return;
+    }
+    for (const edge of parsed.edges) {
       if (/@lol\/(?:database|collector)(?:\/|$)|(?:^|[/\\])(?:database|collector)(?:[/\\]|$)/i.test(edge.specifier)) {
         violations.push(`${relative(workspaceRoot, canonical)} imports forbidden ${edge.specifier}`);
       }
-      const resolution = await resolveImport(edge.specifier, canonical, workspaceRoot, baseUrl, aliases, allowedRoots);
-      if (resolution.unresolvedAlias || (!resolution.path && (edge.specifier.startsWith(".") || aliasTarget(edge.specifier, aliases)))) violations.push(`${relative(workspaceRoot, canonical)} has unresolved alias ${edge.specifier}`);
+      const config = await nearestConfig(canonical, root, rootConfig, configCache);
+      const resolution = await resolveImport(edge.specifier, canonical, workspaceRoot, config, allowedRoots);
+      if (resolution.unresolvedAlias || (!resolution.path && (edge.specifier.startsWith(".") || configuredPath(edge.specifier, config.options)))) violations.push(`${relative(workspaceRoot, canonical)} has unresolved alias ${edge.specifier}`);
       if (resolution.path) await visit(resolution.path);
     }
   };
