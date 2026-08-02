@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@foo*": ["./benign/*"],
+      "@foo": ["./exact/private"]
+    }
+  }
+}

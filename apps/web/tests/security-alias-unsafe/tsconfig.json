@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@unsafe/*": ["../../../../node_modules/typescript/lib/*", "./benign/*"] }
+  }
+}

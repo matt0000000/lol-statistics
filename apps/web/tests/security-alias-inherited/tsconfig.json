@@ -1,0 +1,7 @@
+{
+  // inherited aliases must be parsed as JSONC
+  "extends": "./config/base.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+  },
+}

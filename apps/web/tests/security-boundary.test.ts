@@ -35,4 +35,34 @@ describe("web security boundary", () => {
     const result = await scanClientBoundary(root);
     expect(result.violations.join("\n")).toMatch(/unresolved alias @missing\//);
   });
+
+  it("uses an exact tsconfig alias before an overlapping wildcard alias", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-exact-overlap");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/puuid/);
+    expect(result.violations.join("\n")).not.toMatch(/unresolved alias @foo/);
+  });
+
+  it("resolves inherited JSONC tsconfig aliases", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-inherited");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/participant observations/);
+  });
+
+  it("fails closed for aliases that resolve outside the workspace", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-unsafe");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/unresolved alias @unsafe\//);
+  });
+
+  it("reports tsconfig extends cycles instead of dropping aliases", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-cycle");
+    await expect(scanClientBoundary(root)).rejects.toThrow(/Invalid tsconfig/);
+  });
+
+  it("ignores import-like text in comments and ordinary strings", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-comment-text");
+    const result = await scanClientBoundary(root);
+    expect(result.violations, result.violations.join("\n")).toEqual([]);
+  });
 });
