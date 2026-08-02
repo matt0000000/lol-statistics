@@ -18,12 +18,33 @@ export type RouteQueries = PublicQueries;
 type Context = { params?: Record<string, string> | Promise<Record<string, string>> };
 type Handler = (request: Request, context?: Context) => Promise<Response>;
 
+const ALLOW_GET_HEAD = "GET, HEAD";
+const SECURITY_HEADERS = {
+  "Cache-Control": "no-store",
+  "Vary": "Accept, If-None-Match",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer"
+} as const;
+
 const QUERY_LIMITS = { search: 100 } as const;
 const PATH_ID = /^[1-9]\d*$/;
 
 function invalid(): Response { return responseForError({ code: "invalid_request" }); }
-function methodNotAllowed(): Response {
-  return new Response(null, { status: 405, headers: { Allow: "GET", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" } });
+/** Shared secured response for methods not supported by a read-only resource. */
+export function methodNotAllowed(): Response {
+  return new Response(null, { status: 405, headers: { ...SECURITY_HEADERS, Allow: ALLOW_GET_HEAD } });
+}
+
+/** A read-only route's capability response. No CORS permissions are granted. */
+export function optionsResponse(): Response {
+  return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, Allow: ALLOW_GET_HEAD } });
+}
+
+/** Execute a GET handler for HEAD while suppressing its response body. */
+export async function headResponse(request: Request, handler: Handler, context?: Context): Promise<Response> {
+  const getRequest = new Request(request, { method: "GET" });
+  const response = await handler(getRequest, context);
+  return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 function queryValues(request: Request, allowed: readonly string[]): Map<string, string> | Response {
@@ -84,6 +105,7 @@ async function queryErrorOr<T>(operation: () => Promise<T>): Promise<{ value?: T
 export function createRouteHandlers(queries: RouteQueries, dependencies: { scopeOf?: (value: unknown) => string | undefined } = {}) {
   const scopeOf = dependencies.scopeOf ?? ((value: unknown) => publicationScopeOf(value));
   const meta: Handler = async (request) => {
+    if (request.method === "OPTIONS") return optionsResponse();
     if (request.method !== "GET") return methodNotAllowed();
     const parsed = queryValues(request, []); if (parsed instanceof Response || parsed.size) return invalid();
     const result = await queryErrorOr(() => queries.meta()); if (result.error) return result.error;
@@ -94,6 +116,7 @@ export function createRouteHandlers(queries: RouteQueries, dependencies: { scope
   };
 
   const champions: Handler = async (request) => {
+    if (request.method === "OPTIONS") return optionsResponse();
     if (request.method !== "GET") return methodNotAllowed();
     const parsed = queryValues(request, ["search"]); if (parsed instanceof Response) return parsed;
     const searchValue = parsed.get("search") ?? null;
@@ -110,6 +133,7 @@ export function createRouteHandlers(queries: RouteQueries, dependencies: { scope
   };
 
   const champion: Handler = async (request, context) => {
+    if (request.method === "OPTIONS") return optionsResponse();
     if (request.method !== "GET") return methodNotAllowed();
     const parsed = queryValues(request, []); if (parsed instanceof Response || parsed.size) return invalid();
     const params = await routeParams(context); const championId = pathChampionId(request, params.championId); if (!championId) return invalid();
@@ -120,6 +144,7 @@ export function createRouteHandlers(queries: RouteQueries, dependencies: { scope
   };
 
   const stats: Handler = async (request, context) => {
+    if (request.method === "OPTIONS") return optionsResponse();
     if (request.method !== "GET") return methodNotAllowed();
     const parsed = queryValues(request, ["view", "sort", "includeLowConfidence"]); if (parsed instanceof Response) return parsed;
     const params = await routeParams(context); const championId = pathChampionId(request, params.championId); if (!championId) return invalid();
@@ -137,6 +162,7 @@ export function createRouteHandlers(queries: RouteQueries, dependencies: { scope
   };
 
   const methodology: Handler = async (request) => {
+    if (request.method === "OPTIONS") return optionsResponse();
     if (request.method !== "GET") return methodNotAllowed();
     const parsed = queryValues(request, []); if (parsed instanceof Response || parsed.size) return invalid();
     const result = await queryErrorOr(() => queries.methodology()); if (result.error) return result.error;

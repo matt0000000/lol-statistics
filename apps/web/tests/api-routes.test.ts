@@ -50,9 +50,19 @@ describe("public API route matrix", () => {
   it("returns the common security headers for method-not-allowed responses", async () => {
     const response = await routes().meta(new Request("http://localhost/api/meta", { method: "POST" }));
     expect(response.status).toBe(405);
-    expect(response.headers.get("allow")).toBe("GET");
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("vary")).toBe("Accept, If-None-Match");
+  });
+
+  it("returns a secured OPTIONS capability response without querying dependencies", async () => {
+    const response = await routes().meta(new Request("http://localhost/api/meta", { method: "OPTIONS" }));
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("vary")).toBe("Accept, If-None-Match");
   });
 
   it("rejects an invalid role and view", async () => {
