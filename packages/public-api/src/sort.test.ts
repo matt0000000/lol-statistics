@@ -5,6 +5,7 @@ import { compareCanonicalKeys, sortStats } from "./sort";
 const row = (key: string, adjustedScore: number | null, sample: number): PublicStatRow => ({
   key,
   itemIds: key.split(":").map(Number),
+  itemMetadata: key.split(":").map((id) => ({ id: Number(id), name: `Item ${id}`, iconUrl: `https://example.test/${id}.png` })),
   wins: sample / 2,
   losses: sample / 2,
   sample,

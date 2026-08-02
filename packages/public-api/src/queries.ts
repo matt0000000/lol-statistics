@@ -140,6 +140,27 @@ function itemIds(value: unknown): number[] {
   return [];
 }
 
+function itemMetadata(value: unknown, ids: number[], row: Row): Array<{ id: number; name: string; iconUrl: string }> {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { value = undefined; }
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      const id = integerValue(item.id);
+      const name = typeof item.name === "string" ? item.name : "";
+      const iconUrl = typeof item.iconUrl === "string" ? item.iconUrl : "";
+      return id > 0 && name && iconUrl ? [{ id, name, iconUrl }] : [];
+    });
+  }
+  // Single-item views expose these columns directly in the public SQL views.
+  if (ids.length === 1 && typeof row.item_name === "string" && typeof row.item_icon_url === "string") {
+    return [{ id: ids[0]!, name: row.item_name, iconUrl: row.item_icon_url }];
+  }
+  return [];
+}
+
 function statRow(row: Row, minimumSample: number, baselineSample: number, baselineWins: number): PublicStatRow {
   const wins = integerValue(row.wins);
   const losses = integerValue(row.losses);
@@ -149,9 +170,11 @@ function statRow(row: Row, minimumSample: number, baselineSample: number, baseli
   const baselineWinRate = baselineSample === 0 ? 0 : baselineWins / baselineSample;
   const interval = wilson95(wins, sample);
   const recommended = sample >= minimumSample;
+  const ids = itemIds(row.item_ids);
   return {
     key: String(row.stat_key),
-    itemIds: itemIds(row.item_ids),
+    itemIds: ids,
+    itemMetadata: itemMetadata(row.item_metadata, ids, row),
     wins,
     losses,
     sample,
@@ -294,7 +317,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         SELECT a.*, c.champion_id AS selected_champion_id, c.slug, c.name, c.icon_url, c.splash_url,
           c.roles,
           b.wins AS baseline_wins, b.losses AS baseline_losses, b.sample AS baseline_sample,
-          s.stat_key, s.item_ids, s.wins, s.losses, s.sample
+          s.stat_key, s.item_ids, s.item_metadata, s.item_name, s.item_icon_url, s.wins, s.losses, s.sample
         FROM active a
         LEFT JOIN selected_champion c ON true
         LEFT JOIN selected_baseline b ON true

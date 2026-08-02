@@ -26,6 +26,8 @@ const statsRow = {
   icon_url: "https://example.test/jinx.png",
   splash_url: null,
   roles: ["BOTTOM", "UTILITY"],
+  item_name: "Infinity Edge",
+  item_icon_url: "https://example.test/3031.png",
   baseline_wins: 60,
   baseline_losses: 40,
   baseline_sample: 100,
@@ -122,7 +124,8 @@ describe("stats query boundary", () => {
     const sourceRows = keys.map((stat_key, index) => {
       const sample = index < 90 ? 100 + (index % 7) : 99;
       const wins = Math.min(sample, 45 + (index % 53));
-      return { ...statsRow, baseline_wins: 600, baseline_losses: 400, baseline_sample: 1000, stat_key, item_ids: stat_key.split(":").map(Number), wins, losses: sample - wins, sample };
+      const ids = stat_key.split(":").map(Number);
+      return { ...statsRow, baseline_wins: 600, baseline_losses: 400, baseline_sample: 1000, stat_key, item_ids: ids, item_metadata: ids.map((id) => ({ id, name: `Item ${id}`, iconUrl: `https://example.test/${id}.png` })), wins, losses: sample - wins, sample };
     });
     expect(sourceRows.length).toBeGreaterThan(100);
     const sorts = ["adjusted", "winRate", "buildRate", "sample"] as const;

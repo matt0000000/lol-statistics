@@ -84,6 +84,7 @@ SELECT
   b.sample AS baseline_sample,
   i.name AS item_name,
   i.icon_url AS item_icon_url,
+  jsonb_build_array(jsonb_build_object('id', i.normalized_base_id, 'name', i.name, 'iconUrl', i.icon_url)) AS item_metadata,
   ARRAY[a.item_id]::integer[] AS item_ids,
   a.item_id::text AS stat_key
 FROM item_aggregates a
@@ -114,7 +115,12 @@ SELECT
   a.sample,
   b.wins AS baseline_wins,
   b.losses AS baseline_losses,
-  b.sample AS baseline_sample
+  b.sample AS baseline_sample,
+  (
+    SELECT jsonb_agg(jsonb_build_object('id', m.normalized_base_id, 'name', m.name, 'iconUrl', m.icon_url) ORDER BY u.ordinality)
+    FROM unnest(ARRAY(SELECT value::integer FROM unnest(string_to_array(a.combination_key, ':')) AS value)::integer[]) WITH ORDINALITY AS u(item_id, ordinality)
+    JOIN public_item_metadata m ON m.patch_id = ap.patch_id AND m.normalized_base_id = u.item_id
+  ) AS item_metadata
 FROM combination_aggregates a
 JOIN public_active_publication ap ON ap.publication_id = a.publication_id
 JOIN public_champion_role_baselines b
@@ -147,6 +153,7 @@ SELECT
   b.sample AS baseline_sample,
   i.name AS item_name,
   i.icon_url AS item_icon_url,
+  jsonb_build_array(jsonb_build_object('id', i.normalized_base_id, 'name', i.name, 'iconUrl', i.icon_url)) AS item_metadata,
   ARRAY[a.item_id]::integer[] AS item_ids,
   a.item_id::text AS stat_key
 FROM boots_aggregates a

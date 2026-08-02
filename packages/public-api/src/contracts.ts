@@ -60,6 +60,9 @@ export type PublicBaseline = z.infer<typeof publicBaselineSchema>;
 export const publicStatRowSchema = z.object({
   key: z.string().min(1),
   itemIds: z.array(nonnegativeInteger).min(1).max(3),
+  // Official Data Dragon metadata for every item in the stat key. Public SQL
+  // views populate this in canonical item-id order for all production rows.
+  itemMetadata: z.array(z.object({ id: nonnegativeInteger, name: z.string().min(1), iconUrl: z.string().url() }).strict()).max(3),
   wins: nonnegativeInteger,
   losses: nonnegativeInteger,
   sample: nonnegativeInteger,
@@ -71,6 +74,8 @@ export const publicStatRowSchema = z.object({
   adjustedScore: finiteNumber.nullable(),
   confidence: z.enum(["recommended", "low"])
 }).strict().superRefine((value, ctx) => {
+  if (value.itemMetadata.length !== value.itemIds.length) ctx.addIssue({ code: "custom", message: "item metadata must cover every item id", path: ["itemMetadata"] });
+  value.itemMetadata.forEach((item, index) => { if (item.id !== value.itemIds[index]) ctx.addIssue({ code: "custom", message: "item metadata must follow item id order", path: ["itemMetadata", index, "id"] }); });
   if (value.wins + value.losses !== value.sample) ctx.addIssue({ code: "custom", message: "wins + losses must equal sample", path: ["sample"] });
   for (const field of ["rawWinRate", "buildRate", "confidenceLower", "confidenceUpper"] as const) {
     if (value[field] < 0 || value[field] > 1) ctx.addIssue({ code: "custom", message: `${field} must be between 0 and 1`, path: [field] });

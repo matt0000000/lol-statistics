@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { PublicChampion, PublicMeta, PublicQueries } from "@lol/public-api";
-import { resolveChampionPage } from "./page";
+import type { PublicChampion, PublicMeta, PublicQueries, PublicStatsResponse } from "@lol/public-api";
+import { parseStatsParams, resolveChampionPage } from "./page";
 
 const champion: PublicChampion = { championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://example.test/jinx.png", splashUrl: null, roles: ["BOTTOM", "UTILITY"] };
 const meta: PublicMeta = {
@@ -21,6 +21,10 @@ function queries(overrides: Partial<PublicQueries> = {}): PublicQueries {
     ...overrides
   };
 }
+
+const stats: PublicStatsResponse = {
+  meta, champion, role: "BOTTOM", baseline: { wins: 60, losses: 40, sample: 100, winRate: 0.6 }, view: "items", sort: "adjusted", includeLowConfidence: false, minimumSample: 100, rows: []
+};
 
 describe("champion page resolver", () => {
   it("permanently redirects aliases and preserves only a safe single role", async () => {
@@ -45,5 +49,19 @@ describe("champion page resolver", () => {
     await expect(resolveChampionPage({ slug: "jinx", searchParams: {}, queries: queries({ championBySlug: async () => ({ code: "dataset_warming" }) }) })).resolves.toEqual({ kind: "warming" });
     await expect(resolveChampionPage({ slug: "missing", searchParams: {}, queries: queries({ championBySlug: async () => ({ code: "champion_not_found" }) }) })).resolves.toEqual({ kind: "notFound" });
     await expect(resolveChampionPage({ slug: "jinx", searchParams: {}, queries: queries({ championBySlug: async () => { throw new Error("secret db details"); } }) })).resolves.toEqual({ kind: "error" });
+  });
+
+  it("calls stats only for an explicit valid role and normalizes safe defaults", async () => {
+    const calls: unknown[] = [];
+    const result = await resolveChampionPage({ slug: "jinx", searchParams: { role: "BOTTOM", view: ["pairs", "items"], sort: "invalid", lowConfidence: "true" }, queries: queries({ stats: async (input) => { calls.push(input); return stats; } }) });
+    expect(calls).toEqual([{ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: false }]);
+    expect(result).toMatchObject({ kind: "ready", stats });
+    await resolveChampionPage({ slug: "jinx", searchParams: {}, queries: queries({ stats: async () => { throw new Error("must not call"); } }) });
+  });
+
+  it("uses the exact low-confidence token and preserves canonical controls on alias redirects", async () => {
+    expect(parseStatsParams({ role: "BOTTOM", view: "trios", sort: "sample", lowConfidence: "1" })).toEqual({ role: "BOTTOM", view: "trios", sort: "sample", lowConfidence: true });
+    expect(parseStatsParams({ role: ["BOTTOM"], lowConfidence: ["1", "0"] })).toEqual({ role: null, view: "items", sort: "adjusted", lowConfidence: false });
+    await expect(resolveChampionPage({ slug: "JINX", searchParams: { role: "BOTTOM", view: "pairs", sort: "sample", lowConfidence: "1" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=BOTTOM&view=pairs&sort=sample&lowConfidence=1" });
   });
 });

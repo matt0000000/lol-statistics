@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { publicStatRowSchema, publicStatsResponseSchema } from "./contracts";
 
 const row = {
-  key: "3031", itemIds: [3031], wins: 60, losses: 40, sample: 100,
+  key: "3031", itemIds: [3031], itemMetadata: [{ id: 3031, name: "Infinity Edge", iconUrl: "https://example.test/3031.png" }], wins: 60, losses: 40, sample: 100,
   rawWinRate: 0.6, buildRate: 0.2, baselineDelta: 0.1,
   confidenceLower: 0.5, confidenceUpper: 0.69, adjustedScore: 0.5, confidence: "recommended" as const
 };
