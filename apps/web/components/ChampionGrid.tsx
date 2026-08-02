@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ScopeBar } from "./ScopeBar";
 import { roleLabel } from "./RoleSelector";
+import { DatasetBanner, datasetState } from "./DatasetBanner";
 
 const MAX_SEARCH_LENGTH = 80;
 function fold(value: string): string {
@@ -37,6 +38,7 @@ export function ChampionGrid({ champions, meta, warming = false }: { champions: 
             </Link>
           </li>)}
         </ul>}
+      <DatasetBanner state={warming || !meta ? "warming" : datasetState(meta, new Date())} publishedAt={meta?.publishedAt} />
     </section>
   );
 }

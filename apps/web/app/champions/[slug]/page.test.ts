@@ -18,6 +18,7 @@ function queries(overrides: Partial<PublicQueries> = {}): PublicQueries {
     champion: async () => champion,
     stats: async () => ({ code: "role_not_found" }),
     methodology: async () => ({ version: "1", scope: meta.scope, formulas: { rawWinRate: "", buildRate: "", baselineDelta: "", adjustedScore: "" }, minimumSample: 100, lowConfidence: "", limitations: [""] }),
+    status: async () => ({ code: "dataset_warming" }),
     ...overrides
   };
 }

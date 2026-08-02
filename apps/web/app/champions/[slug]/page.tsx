@@ -6,6 +6,7 @@ import { ScopeBar } from "../../../components/ScopeBar";
 import { StatsTable } from "../../../components/StatsTable";
 import { ViewTabs } from "../../../components/ViewTabs";
 import { productionPublicQueries } from "../../../lib/route-factory";
+import { DatasetBanner, datasetState } from "../../../components/DatasetBanner";
 
 export type SearchParams = Record<string, string | string[] | undefined>;
 export const dynamic = "force-dynamic";
@@ -111,6 +112,7 @@ export default async function ChampionPage({ params, searchParams }: { params: P
   return (
     <main className="site-shell champion-page">
       <ScopeBar meta={meta} warming={warming} />
+      <DatasetBanner state={warming || !meta ? "warming" : datasetState(meta, new Date())} publishedAt={meta?.publishedAt} />
       <div className="champion-identity">
         <img src={champion.iconUrl} alt={`${champion.name} champion icon`} width={96} height={96} />
         <div><p className="eyebrow">Champion profile</p><h1>{champion.name}</h1><p className="role-summary">Published roles: {champion.roles.map(roleLabel).join(" · ")}</p></div>

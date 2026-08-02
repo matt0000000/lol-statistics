@@ -29,6 +29,7 @@ function fakeQueries(overrides: Partial<RouteQueries> = {}): RouteQueries {
     champion: async () => champion,
     stats: async () => stats,
     methodology: async () => methodology,
+    status: async () => ({ code: "dataset_warming" }),
     ...overrides
   };
 }

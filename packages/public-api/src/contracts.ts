@@ -44,6 +44,23 @@ export const publicMetaSchema = z.object({
 }).strict();
 export type PublicMeta = z.infer<typeof publicMetaSchema>;
 
+export const publicDatasetStateSchema = z.enum(["warming", "fresh", "stale"]);
+export type PublicDatasetState = z.infer<typeof publicDatasetStateSchema>;
+export const publicStatusSchema = z.object({
+  patch: z.object({ version: z.string().min(1), key: z.string().regex(/^\d+\.\d+$/) }).strict(),
+  scope: publicScopeSchema,
+  coverageStartedAt: isoDate.nullable(),
+  publishedAt: isoDate.nullable(),
+  publicationAgeSeconds: nonnegativeInteger.nullable(),
+  datasetState: publicDatasetStateSchema,
+  runStatus: z.enum(["IDLE", "PENDING", "RUNNING", "COMPLETED", "FAILED"]),
+  stage: z.enum(["CATALOG", "LADDER", "DISCOVERY", "MATCHES", "AGGREGATES", "VERIFY", "PUBLISH"]),
+  counters: z.object({ matchesDiscovered: nonnegativeInteger, matchesIngested: nonnegativeInteger, observationsAccepted: nonnegativeInteger, observationsRejected: nonnegativeInteger }).strict(),
+  eligibleSamplesByRole: z.record(roleSchema, nonnegativeInteger),
+  unknownItemCount: nonnegativeInteger
+}).strict();
+export type PublicStatus = z.infer<typeof publicStatusSchema>;
+
 export const publicChampionSummarySchema = z.object({
   championId: nonnegativeInteger,
   slug: z.string().min(1),

@@ -5,6 +5,7 @@ import type {
   PublicChampionSummary,
   PublicMeta,
   PublicMethodology,
+  PublicStatus,
   PublicQueryError,
   PublicStatRow,
   PublicStatsResponse,
@@ -17,6 +18,7 @@ import {
   publicChampionSummarySchema,
   publicMetaSchema,
   publicMethodologySchema,
+  publicStatusSchema,
   publicQueryErrorSchema,
   publicStatsResponseSchema
 } from "./contracts";
@@ -33,6 +35,7 @@ export interface PublicQueries {
   champion(championId: number): Promise<PublicChampion | PublicQueryError>;
   stats(input: PublicStatsInput): Promise<PublicStatsResponse | PublicQueryError>;
   methodology(): Promise<PublicMethodology>;
+  status(): Promise<PublicStatus | PublicQueryError>;
 }
 
 type Row = Record<string, unknown>;
@@ -384,6 +387,33 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         lowConfidence: "Rows below the publication minimum sample are hidden by default and never receive an adjusted recommendation score.",
         limitations: ["These aggregates describe correlation, not causation.", "Completed-item results include survivorship and gold-lead bias.", "Rank is measured at collection time."]
       });
+    },
+
+    async status() {
+      const row = firstRow(await execute(sql`SELECT * FROM public_status LIMIT 1`));
+      if (!row) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
+      const publishedAt = row.published_at == null ? null : iso(row.published_at);
+      const age = row.publication_age_seconds == null ? null : integerValue(row.publication_age_seconds);
+      const status = publicStatusSchema.parse({
+        patch: { version: String(row.patch_version), key: String(row.patch_key) },
+        scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
+        coverageStartedAt: row.coverage_started_at == null ? null : iso(row.coverage_started_at),
+        publishedAt,
+        publicationAgeSeconds: age,
+        datasetState: String(row.dataset_state) as PublicStatus["datasetState"],
+        runStatus: String(row.run_status) as PublicStatus["runStatus"],
+        stage: String(row.stage).toUpperCase() as PublicStatus["stage"],
+        counters: {
+          matchesDiscovered: integerValue(row.matches_discovered), matchesIngested: integerValue(row.matches_ingested),
+          observationsAccepted: integerValue(row.observations_accepted), observationsRejected: integerValue(row.observations_rejected)
+        },
+        eligibleSamplesByRole: {
+          TOP: integerValue(row.top_sample), JUNGLE: integerValue(row.jungle_sample), MIDDLE: integerValue(row.middle_sample),
+          BOTTOM: integerValue(row.bottom_sample), UTILITY: integerValue(row.utility_sample)
+        },
+        unknownItemCount: integerValue(row.unknown_item_count)
+      });
+      return status;
     }
   };
 }

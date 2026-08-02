@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { aggregatePublications, baselineAggregates, bootsAggregates, champions, collectionRuns, combinationAggregates, createMigratedTestDatabase, itemAggregates, items, patches } from "@lol/database";
 import { createPublicQueries } from "./queries";
-import { publicChampionSchema, publicChampionSummarySchema, publicMethodologySchema, publicStatsResponseSchema } from "./contracts";
+import { publicChampionSchema, publicChampionSummarySchema, publicMethodologySchema, publicStatsResponseSchema, publicStatusSchema } from "./contracts";
 
 const sourceUrl = process.env.TEST_DATABASE_URL;
 const integration = describe.skipIf(!sourceUrl);
@@ -285,5 +285,18 @@ integration("public views and query repository", () => {
 
   it("returns strict methodology output", async () => {
     publicMethodologySchema.parse(await createPublicQueries(isolated.db).methodology());
+  });
+
+  it("returns public-safe current patch status and no private columns", async () => {
+    const status = await createPublicQueries(isolated.db).status();
+    expect("code" in status).toBe(false);
+    if (!("code" in status)) {
+      publicStatusSchema.parse(status);
+      expect(status.patch.key).toBe("16.16");
+      expect(status.eligibleSamplesByRole.BOTTOM).toBe(1000);
+      expect(JSON.stringify(status)).not.toMatch(/puuid|matchId|errorDetails|rawFinalSlots/i);
+    }
+    const source = await isolated.db.execute("SELECT pg_get_viewdef('public_status'::regclass, true) AS definition" as never) as Array<{ definition: string }>;
+    expect(JSON.stringify(source)).not.toMatch(/puuid|match_id|raw_final_slots|error_details|riot_api_key/i);
   });
 });
