@@ -203,6 +203,7 @@ export const participantRejections = pgTable(
     participantId: integer("participant_id").notNull(),
     patchId: integer("patch_id").notNull(),
     reason: rejectionReason("reason").notNull(),
+    runId: uuid("run_id").references(() => collectionRuns.id),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
   (table) => [

@@ -39,15 +39,16 @@ export function rejectedRefreshAllowed(input: {
   existingValidationState: string;
   hasAcceptedCanonicalRows: boolean;
   incomingAcceptedCount: number;
-  currentRunStartedAt: Date | null | undefined;
-  latestRejectionCreatedAt: Date | null | undefined;
+  existingRunIds: readonly (string | null | undefined)[];
+  currentRunId: string;
 }): boolean {
+  const runIds = input.existingRunIds;
+  const allLegacy = runIds.length > 0 && runIds.every((runId) => runId == null);
+  const allPriorRuns = runIds.length > 0 && runIds.every((runId) => runId != null && runId !== input.currentRunId);
   return input.existingValidationState === "REJECTED"
     && !input.hasAcceptedCanonicalRows
     && input.incomingAcceptedCount === 0
-    && input.currentRunStartedAt instanceof Date
-    && input.latestRejectionCreatedAt instanceof Date
-    && input.currentRunStartedAt.getTime() > input.latestRejectionCreatedAt.getTime();
+    && (allLegacy || allPriorRuns);
 }
 
 /** Canonical persistence boundary for one match. All writes happen in one transaction. */
@@ -79,7 +80,6 @@ export class ObservationsRepository {
     if (patch.isActive !== true) throw new Error("patch is not active");
     const found = await tx.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, match.metadata.matchId))).limit(1);
     if (!found[0]) throw new Error("match does not belong to collection run");
-    const [run] = await tx.select({ startedAt: collectionRuns.startedAt }).from(collectionRuns).where(eq(collectionRuns.id, runId)).limit(1);
     let matchPatch: string | undefined;
     try { matchPatch = toPatchKey(match.info.gameVersion); } catch {
       matchPatch = undefined;
@@ -106,28 +106,29 @@ export class ObservationsRepository {
     if (existing.patchId !== patchId || existing.platformId !== values.platformId || existing.queueId !== values.queueId || existing.gameVersion !== values.gameVersion || existing.gameDuration !== values.gameDuration || (!rejectedUpgrade && existing.validationState !== values.validationState) || (!rejectedUpgrade && existing.validationError !== values.validationError) || new Date(existing.gameCreation).getTime() !== values.gameCreation.getTime()) {
       throw new ReplayConflict();
     }
-    if (rejectedUpgrade) {
-      await tx.delete(participantRejections).where(and(eq(participantRejections.matchId, match.metadata.matchId), eq(participantRejections.patchId, patchId)));
-      await tx.update(matches).set({ validationState: "VALID", validationError: null }).where(eq(matches.matchId, match.metadata.matchId));
-    }
     const hasAcceptedCanonicalRows = await this.hasAcceptedCanonicalRows(tx, match.metadata.matchId);
-    if (await this.hasCanonicalRows(tx, match.metadata.matchId)) {
+    const hasCanonicalRows = await this.hasCanonicalRows(tx, match.metadata.matchId);
+    // A rejected match with observations violates the canonical invariant. Check
+    // before any upgrade, replacement, or deletion so the failure is atomic.
+    if (existing.validationState === "REJECTED" && hasAcceptedCanonicalRows) throw new ReplayConflict();
+    if (hasCanonicalRows) {
       if (await this.sameCanonical(tx, match.metadata.matchId, patchId, participants)) {
         return { observationsAccepted: accepted.length, observationsRejected: rejected, replay: true };
       }
-      const rejectionRows = await tx.select({ createdAt: participantRejections.createdAt }).from(participantRejections).where(eq(participantRejections.matchId, match.metadata.matchId));
-      let latestRejectionCreatedAt: Date | null = null;
-      for (const row of rejectionRows as Array<{ createdAt: Date }>) {
-        const createdAt = new Date(row.createdAt);
-        if (!latestRejectionCreatedAt || createdAt.getTime() > latestRejectionCreatedAt.getTime()) latestRejectionCreatedAt = createdAt;
-      }
-      if (rejectedRefreshAllowed({ existingValidationState: existing.validationState, hasAcceptedCanonicalRows, incomingAcceptedCount: accepted.length, currentRunStartedAt: run?.startedAt, latestRejectionCreatedAt })) {
+      const rejectionRows = await tx.select({ runId: participantRejections.runId }).from(participantRejections).where(eq(participantRejections.matchId, match.metadata.matchId));
+      if (rejectedRefreshAllowed({ existingValidationState: existing.validationState, hasAcceptedCanonicalRows, incomingAcceptedCount: accepted.length, existingRunIds: rejectionRows.map((row: { runId: string | null }) => row.runId), currentRunId: runId })) {
         await tx.delete(participantRejections).where(and(eq(participantRejections.matchId, match.metadata.matchId), eq(participantRejections.patchId, patchId)));
-        await tx.insert(participantRejections).values(participants.filter((part): part is Extract<ParsedParticipant, { accepted: false }> => !part.accepted).map((part) => ({ matchId: match.metadata.matchId, participantId: part.participantId, patchId, reason: part.reason })));
+        await tx.insert(participantRejections).values(participants.filter((part): part is Extract<ParsedParticipant, { accepted: false }> => !part.accepted).map((part) => ({ matchId: match.metadata.matchId, participantId: part.participantId, patchId, reason: part.reason, runId })));
         await tx.update(collectionRuns).set({ matchesIngested: sql`${collectionRuns.matchesIngested} + 1`, observationsRejected: sql`${collectionRuns.observationsRejected} + ${rejected}`, updatedAt: new Date() }).where(eq(collectionRuns.id, runId));
         return { observationsAccepted: 0, observationsRejected: rejected, replay: false };
       }
+      if (!rejectedUpgrade) throw new ReplayConflict();
+    } else if (!rejectedUpgrade && existing.validationState !== values.validationState) {
       throw new ReplayConflict();
+    }
+    if (rejectedUpgrade) {
+      await tx.delete(participantRejections).where(and(eq(participantRejections.matchId, match.metadata.matchId), eq(participantRejections.patchId, patchId)));
+      await tx.update(matches).set({ validationState: "VALID", validationError: null }).where(eq(matches.matchId, match.metadata.matchId));
     }
     for (const part of accepted) {
       const observation = part.observation;
@@ -136,7 +137,7 @@ export class ObservationsRepository {
       if (observation.boots) await tx.insert(participantBoots).values({ matchId: match.metadata.matchId, participantId: observation.participantId, patchId, itemId: observation.boots.itemId, slotIndex: observation.boots.slotIndex });
     }
     const rejectedParticipants = participants.filter((part): part is Extract<ParsedParticipant, { accepted: false }> => !part.accepted);
-    if (rejectedParticipants.length) await tx.insert(participantRejections).values(rejectedParticipants.map((part) => ({ matchId: match.metadata.matchId, participantId: part.participantId, patchId, reason: part.reason })));
+    if (rejectedParticipants.length) await tx.insert(participantRejections).values(rejectedParticipants.map((part) => ({ matchId: match.metadata.matchId, participantId: part.participantId, patchId, reason: part.reason, runId })));
     await tx.update(collectionRuns).set({ matchesIngested: sql`${collectionRuns.matchesIngested} + 1`, observationsAccepted: sql`${collectionRuns.observationsAccepted} + ${accepted.length}`, observationsRejected: sql`${collectionRuns.observationsRejected} + ${rejected}`, updatedAt: new Date() }).where(eq(collectionRuns.id, runId));
     return { observationsAccepted: accepted.length, observationsRejected: rejected, replay: false };
   }

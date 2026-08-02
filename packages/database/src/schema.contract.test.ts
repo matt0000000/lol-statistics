@@ -9,6 +9,7 @@ const migration = migrationFiles
 const migrationMetadata = readFileSync(new URL("../../../migrations/meta/0012_snapshot.json", import.meta.url), "utf8");
 const coverageMigration = readFileSync(new URL("../../../migrations/0011_coverage_recovery.sql", import.meta.url), "utf8");
 const processedMigration = readFileSync(new URL("../../../migrations/0012_processed_discovery.sql", import.meta.url), "utf8");
+const rejectionRunMigration = readFileSync(new URL("../../../migrations/0013_mute_grim_reaper.sql", import.meta.url), "utf8");
 
 describe("canonical schema integrity contract", () => {
   it("consumes domain patch and role contracts", () => {
@@ -114,5 +115,13 @@ describe("canonical schema integrity contract", () => {
     expect(coverageMigration).toContain("ALTER COLUMN \"coverage_started_at\" SET DEFAULT");
     expect(coverageMigration).toContain("ALTER COLUMN \"coverage_started_at\" SET NOT NULL");
     expect(coverageMigration).not.toMatch(/ADD COLUMN[^;]*DEFAULT now\(\)/i);
+  });
+
+  it("adds nullable rejection provenance without backfilling legacy rows", () => {
+    expect(source).toContain('runId: uuid("run_id").references(() => collectionRuns.id)');
+    expect(rejectionRunMigration).toContain('ADD COLUMN "run_id" uuid;');
+    expect(rejectionRunMigration).toContain('participant_rejections_run_id_collection_runs_id_fk');
+    expect(rejectionRunMigration).not.toMatch(/UPDATE\s+"?participant_rejections/i);
+    expect(rejectionRunMigration).not.toMatch(/SET\s+"?run_id/i);
   });
 });

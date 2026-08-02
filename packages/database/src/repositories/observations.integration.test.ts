@@ -42,7 +42,9 @@ describe.skipIf(!url)("validated participant observations", () => {
     const observations = await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID));
     expect(observations).toHaveLength(8);
     expect(observations.every((row) => row.puuid.startsWith(PRIVATE_PREFIX))).toBe(true);
-    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(2);
+    const persistedRejections = await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID));
+    expect(persistedRejections).toHaveLength(2);
+    expect(persistedRejections.every((row) => row.runId === runId)).toBe(true);
     const cores = await database.db.select().from(participantCoreItems).where(eq(participantCoreItems.matchId, MATCH_ID));
     expect(cores.find((row) => row.participantId === 1)).toMatchObject({ itemId: 3031, quantity: 2, slotIndex: 0 });
     expect(cores.some((row) => row.itemId === 1001 || row.itemId === 2055)).toBe(false);
@@ -140,10 +142,11 @@ describe.skipIf(!url)("validated participant observations", () => {
     const result = await repository.saveValidatedMatch(laterRun!.id, patchId, matchPayload(), refreshed);
     expect(result).toEqual({ observationsAccepted: 0, observationsRejected: 2, replay: false });
     expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
-    expect(await database.db.select({ participantId: participantRejections.participantId, reason: participantRejections.reason }).from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toEqual([
+    expect(await database.db.select({ participantId: participantRejections.participantId, reason: participantRejections.reason }).from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toEqual(expect.arrayContaining([
       { participantId: 1, reason: "duration" },
       { participantId: 2, reason: "duration" }
-    ]);
+    ]));
+    expect((await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).every((row) => row.runId === laterRun!.id)).toBe(true);
     expect((await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID)))[0]).toMatchObject({ validationState: "REJECTED", validationError: "NO_ELIGIBLE_PARTICIPANTS" });
     const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, laterRun!.id));
     expect(run).toMatchObject({ matchesIngested: 1, observationsAccepted: 0, observationsRejected: 2 });
@@ -167,10 +170,40 @@ describe.skipIf(!url)("validated participant observations", () => {
     expect(run).toMatchObject({ matchesIngested: 1, observationsAccepted: 0, observationsRejected: 1 });
   });
 
+  it("fails closed when a changed rejected audit is replayed by the same run", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "rank" }]);
+    const before = await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID));
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "duration" }])).rejects.toThrow("match replay conflict");
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toEqual(before);
+  });
+
+  it("upgrades legacy null provenance exactly once during refresh", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "rank" }]);
+    await database.db.update(participantRejections).set({ runId: null }).where(eq(participantRejections.matchId, MATCH_ID));
+    const [laterRun] = await database.db.insert(collectionRuns).values({ status: "RUNNING", stage: "ingest" }).returning({ id: collectionRuns.id });
+    await database.db.insert(discoveredMatches).values({ runId: laterRun!.id, matchId: MATCH_ID });
+    await repository.saveValidatedMatch(laterRun!.id, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "duration" }]);
+    expect((await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID)))[0]?.runId).toBe(laterRun!.id);
+  });
+
   it("fails closed when a rejected match has impossible accepted canonical rows", async () => {
     await repository.saveValidatedMatch(runId, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "rank" }]);
     await database.db.insert(participantObservations).values({ matchId: MATCH_ID, participantId: 1, patchId, puuid: "impossible", championId: 1, role: "BOTTOM", win: true, tier: "EMERALD", division: "I", gameDuration: 1_800, rawFinalSlots: [] });
     await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "duration" }])).rejects.toThrow("match replay conflict");
+  });
+
+  it("fails closed before rejected upgrade when impossible rows meet incoming valid data", async () => {
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), [{ accepted: false, participantId: 1, reason: "rank" }]);
+    await database.db.insert(participantObservations).values({ matchId: MATCH_ID, participantId: 1, patchId, puuid: "impossible", championId: 1, role: "BOTTOM", win: true, tier: "EMERALD", division: "I", gameDuration: 1_800, rawFinalSlots: [] });
+    const before = {
+      match: await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID)),
+      rejections: await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID)),
+      observations: await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))
+    };
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), [acceptedParticipants()[0]!])).rejects.toThrow("match replay conflict");
+    expect(await database.db.select().from(matches).where(eq(matches.matchId, MATCH_ID))).toEqual(before.match);
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toEqual(before.rejections);
+    expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toEqual(before.observations);
   });
 
   it("persists mixed malformed-participant rejections atomically and replays without duplicate counters", async () => {

@@ -5,13 +5,21 @@ describe("rejected refresh state machine", () => {
   const prior = new Date("2026-08-01T00:00:00.000Z");
   const later = new Date("2026-08-02T00:00:00.000Z");
 
-  it("allows only a later all-rejected run without accepted canonical rows", () => {
-    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, currentRunStartedAt: later, latestRejectionCreatedAt: prior })).toBe(true);
-    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: true, incomingAcceptedCount: 0, currentRunStartedAt: later, latestRejectionCreatedAt: prior })).toBe(false);
-    expect(rejectedRefreshAllowed({ existingValidationState: "VALID", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, currentRunStartedAt: later, latestRejectionCreatedAt: prior })).toBe(false);
+  it("allows a changed all-rejected audit from a distinct run", () => {
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: ["run-a", "run-a"], currentRunId: "run-b" })).toBe(true);
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: ["run-a", "run-c"], currentRunId: "run-b" })).toBe(true);
   });
 
-  it("does not treat a same-run changed audit as a refresh", () => {
-    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, currentRunStartedAt: prior, latestRejectionCreatedAt: later })).toBe(false);
+  it("allows one legacy null-run upgrade but rejects mixed provenance", () => {
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: [null, null], currentRunId: "run-b" })).toBe(true);
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: [null, "run-a"], currentRunId: "run-b" })).toBe(false);
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: [null, "run-b"], currentRunId: "run-b" })).toBe(false);
+  });
+
+  it("fails closed for same-run changed audits and invalid states", () => {
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: ["run-b"], currentRunId: "run-b" })).toBe(false);
+    expect(rejectedRefreshAllowed({ existingValidationState: "VALID", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 0, existingRunIds: ["run-a"], currentRunId: "run-b" })).toBe(false);
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: true, incomingAcceptedCount: 0, existingRunIds: ["run-a"], currentRunId: "run-b" })).toBe(false);
+    expect(rejectedRefreshAllowed({ existingValidationState: "REJECTED", hasAcceptedCanonicalRows: false, incomingAcceptedCount: 1, existingRunIds: ["run-a"], currentRunId: "run-b" })).toBe(false);
   });
 });

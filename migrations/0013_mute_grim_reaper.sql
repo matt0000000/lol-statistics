@@ -1,0 +1,2 @@
+ALTER TABLE "participant_rejections" ADD COLUMN "run_id" uuid;--> statement-breakpoint
+ALTER TABLE "participant_rejections" ADD CONSTRAINT "participant_rejections_run_id_collection_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."collection_runs"("id") ON DELETE no action ON UPDATE no action;
