@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const queries = productionPublicQueries();
-  const [metaResult, championsResult] = await Promise.all([queries.meta(), queries.champions()]);
+  const [metaResult, championsResult] = await Promise.all([queries.meta(), queries.championDirectory()]);
   const warming = ("code" in metaResult) || !Array.isArray(championsResult);
   const meta = !("code" in metaResult) ? metaResult as PublicMeta : null;
   const champions = Array.isArray(championsResult) ? championsResult as PublicChampionSummary[] : [];

@@ -18,8 +18,8 @@ h2 { margin-bottom: 8px; font-size: clamp(1.5rem, 4vw, 2.35rem); line-height: 1.
 .scope-bar .scope-title { border: 0; padding-left: 0; color: var(--text); font-weight: 700; }
 .scope-bar .scope-status { margin-left: auto; color: var(--accent); }
 .scope-bar .scope-status.is-warming { color: var(--warm); }
-.section-heading { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-bottom: 20px; }
-.search-field { display: grid; gap: 6px; min-width: min(100%, 280px); color: var(--muted); font-size: .78rem; font-weight: 700; }
+.section-heading { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; align-items: stretch; margin-bottom: 20px; }
+.search-field { display: grid; width: 100%; min-width: 0; gap: 6px; color: var(--muted); font-size: .78rem; font-weight: 700; }
 .search-field input { width: 100%; min-height: 46px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); padding: 0 13px; }
 .champion-grid { display: grid; grid-template-columns: repeat(1, minmax(0, 1fr)); gap: 10px; list-style: none; margin: 0; padding: 0; }
 .champion-card { display: flex; align-items: center; gap: 14px; min-height: 96px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); text-decoration: none; transition: border-color .15s ease, background .15s ease; }
@@ -47,6 +47,6 @@ h2 { margin-bottom: 8px; font-size: clamp(1.5rem, 4vw, 2.35rem); line-height: 1.
 .loading-line, .loading-grid { border-radius: 8px; background: var(--panel-2); }
 .loading-line { width: 45%; height: 60px; }
 .loading-grid { height: 300px; }
-@media (min-width: 640px) { .site-shell { width: min(1120px, calc(100% - 64px)); padding-top: 40px; } .champion-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 640px) { .site-shell { width: min(1120px, calc(100% - 64px)); padding-top: 40px; } .champion-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .section-heading { flex-direction: row; align-items: end; } .search-field { width: min(100%, 280px); } }
 @media (min-width: 900px) { .champion-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }

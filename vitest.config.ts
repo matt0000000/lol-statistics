@@ -11,15 +11,23 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: ["apps/collector/**/*.test.ts", "packages/**/*.test.ts", "apps/web/**/*.test.ts"]
+          include: ["apps/collector/**/*.test.ts", "packages/**/*.test.ts"]
         }
       },
       {
         plugins: [react()],
         test: {
-          name: "web",
+          name: "web-node",
+          environment: "node",
+          include: ["apps/web/**/*.test.ts"]
+        }
+      },
+      {
+        plugins: [react()],
+        test: {
+          name: "web-component",
           environment: "jsdom",
-          include: ["apps/web/**/*.test.ts", "apps/web/**/*.test.tsx"],
+          include: ["apps/web/**/*.test.tsx"],
           setupFiles: ["apps/web/tests/setup.ts"]
         }
       }

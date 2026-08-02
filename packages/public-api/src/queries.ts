@@ -28,6 +28,8 @@ export type PublicStatsInput = { championId: number; role: Role; view: StatsView
 export interface PublicQueries {
   meta(): Promise<PublicMeta | PublicQueryError>;
   champions(search?: string): Promise<PublicChampionSummary[] | PublicQueryError>;
+  championDirectory(): Promise<PublicChampionSummary[] | PublicQueryError>;
+  championBySlug(slug: string): Promise<PublicChampion | PublicQueryError>;
   champion(championId: number): Promise<PublicChampion | PublicQueryError>;
   stats(input: PublicStatsInput): Promise<PublicStatsResponse | PublicQueryError>;
   methodology(): Promise<PublicMethodology>;
@@ -71,6 +73,17 @@ function iso(value: unknown): string {
 
 function numberValue(value: unknown): number { return Number(value ?? 0); }
 function integerValue(value: unknown): number { return Math.trunc(numberValue(value)); }
+
+/** Locale-independent, accent-insensitive text folding for user search. */
+export function normalizeChampionSearch(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/** Slugs are canonical ASCII path segments; lookup is case-insensitive. */
+export function normalizeChampionSlug(value: string): string | undefined {
+  const trimmed = value.trim();
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(trimmed) ? trimmed.toLowerCase() : undefined;
+}
 
 function publicMeta(row: Row): PublicMeta {
   return publicMetaSchema.parse({
@@ -165,7 +178,6 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
     },
 
     async champions(search) {
-      const pattern = search?.trim() ? `%${search.trim().toLowerCase()}%` : null;
       const rows = await execute(sql`
         WITH active AS (SELECT * FROM public_active_publication LIMIT 1)
         SELECT a.publication_id, x.champion_id, x.slug, x.name, x.icon_url, x.roles
@@ -178,14 +190,58 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
           JOIN public_champion_role_baselines b ON b.champion_id = c.champion_id
           GROUP BY b.publication_id, c.champion_id, c.slug, c.name, c.icon_url, c.patch_id
         ) x ON x.publication_id = a.publication_id AND x.patch_id = a.patch_id
-          AND (${pattern} IS NULL OR lower(x.name) LIKE ${pattern} OR lower(x.slug) LIKE ${pattern})
-        ORDER BY lower(x.name), x.champion_id
-        LIMIT 50
+        ORDER BY x.name COLLATE "C", x.champion_id
+        LIMIT 256
       `);
       if (rows.length === 0) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
       const scope = rows.find((row) => publicationId(row))?.publication_id;
-      const output = rows.filter((row) => row.champion_id != null).map((row) => publicChampionSummarySchema.parse({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) }));
+      const needle = search?.trim() ? normalizeChampionSearch(search.trim()) : "";
+      const output = rows.filter((row) => row.champion_id != null)
+        .map((row) => publicChampionSummarySchema.parse({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) }))
+        .filter((entry) => !needle || normalizeChampionSearch(`${entry.name} ${entry.slug}`).includes(needle))
+        .slice(0, 50);
       return attachPublicationScope(output, scope);
+    },
+
+    async championDirectory() {
+      const rows = await execute(sql`
+        WITH active AS (SELECT * FROM public_active_publication LIMIT 1)
+        SELECT a.publication_id, c.champion_id, c.slug, c.name, c.icon_url,
+          ARRAY_AGG(DISTINCT b.role ORDER BY b.role) AS roles
+        FROM active a
+        JOIN public_champions c ON c.patch_id = a.patch_id
+        JOIN public_champion_role_baselines b ON b.publication_id = a.publication_id AND b.champion_id = c.champion_id
+        GROUP BY a.publication_id, c.champion_id, c.slug, c.name, c.icon_url
+        ORDER BY c.name COLLATE "C", c.champion_id
+        LIMIT 256
+      `);
+      if (rows.length === 0) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
+      const scope = rows.find((row) => publicationId(row))?.publication_id;
+      const output = rows.filter((row) => row.champion_id != null).map((row) => publicChampionSummarySchema.parse({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) })) as PublicChampionSummary[];
+      return attachPublicationScope(output, scope);
+    },
+
+    async championBySlug(slug) {
+      const canonical = normalizeChampionSlug(slug);
+      if (!canonical) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
+      const rows = await execute(sql`
+        WITH active AS (SELECT * FROM public_active_publication LIMIT 1)
+        SELECT a.publication_id, c.champion_id, c.slug, c.name, c.icon_url, c.splash_url,
+          COALESCE(ARRAY_AGG(DISTINCT b.role ORDER BY b.role) FILTER (WHERE b.role IS NOT NULL), ARRAY[]::role[]) AS roles
+        FROM active a
+        LEFT JOIN public_champions c ON c.patch_id = a.patch_id AND lower(c.slug) = ${canonical}
+        LEFT JOIN public_champion_role_baselines b ON b.publication_id = a.publication_id AND b.champion_id = c.champion_id
+        GROUP BY a.publication_id, c.champion_id, c.slug, c.name, c.icon_url, c.splash_url
+      `);
+      const active = rows.find((row) => publicationId(row));
+      if (!active) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
+      const matches = rows.filter((row) => row.champion_id != null);
+      // Slug collisions are unsafe to resolve by guesswork: fail closed.
+      if (matches.length !== 1) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
+      if (parseRoles(matches[0]!).length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
+      const champion = championFromRow(matches[0]!);
+      champion.roles = parseRoles(matches[0]!);
+      return attachPublicationScope(publicChampionSchema.parse(champion), publicationId(matches[0]!));
     },
 
     async champion(championId) {

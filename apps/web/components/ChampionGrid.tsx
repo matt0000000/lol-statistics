@@ -8,7 +8,7 @@ import { roleLabel } from "./RoleSelector";
 
 const MAX_SEARCH_LENGTH = 80;
 function fold(value: string): string {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("tr-TR");
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
 export function ChampionGrid({ champions, meta, warming = false }: { champions: PublicChampionSummary[]; meta?: PublicMeta | null; warming?: boolean }) {

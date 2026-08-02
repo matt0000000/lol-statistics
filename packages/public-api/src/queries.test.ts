@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SQL } from "drizzle-orm";
-import { createPublicQueries } from "./queries";
+import { createPublicQueries, normalizeChampionSearch } from "./queries";
 import { publicStatsResponseSchema, type StatsSort } from "./contracts";
 
 const metadata = {
@@ -212,5 +212,48 @@ describe("stats query boundary", () => {
   ] as const)("distinguishes %s from other empty stats states", async (code, rows) => {
     const response = await createPublicQueries({ execute: async () => rows }).stats({ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: false });
     expect(response).toEqual({ code });
+  });
+});
+
+describe("champion directory and search boundaries", () => {
+  const directoryRows = Array.from({ length: 170 }, (_, index) => ({
+    publication_id: "pub-directory",
+    champion_id: index + 1,
+    slug: `champion-${index + 1}`,
+    name: index === 169 ? "İrelia" : `Champion ${index + 1}`,
+    icon_url: "https://example.test/icon.png",
+    roles: ["TOP"]
+  }));
+
+  it("keeps the HTTP search result capped while the directory reaches late roster entries", async () => {
+    const queries = createPublicQueries({ execute: async () => directoryRows });
+    const search = await queries.champions();
+    const directory = await queries.championDirectory();
+    expect("code" in search).toBe(false);
+    expect("code" in directory).toBe(false);
+    if (!Array.isArray(search) || !Array.isArray(directory)) return;
+    expect(search).toHaveLength(50);
+    expect(directory).toHaveLength(170);
+    expect(directory.at(-1)?.slug).toBe("champion-170");
+  });
+
+  it("folds Turkish dotted I and diacritics without locale-specific lowercasing", async () => {
+    expect(normalizeChampionSearch("İRELİA")).toBe("irelia");
+    const queries = createPublicQueries({ execute: async () => directoryRows });
+    const result = await queries.champions("irelia");
+    expect(Array.isArray(result) && result[0]?.name).toBe("İrelia");
+  });
+
+  it("resolves a late slug in one scoped lookup and fails closed on collisions", async () => {
+    const late = { ...directoryRows[169], splash_url: null };
+    const queries = createPublicQueries({ execute: async () => [late] });
+    const result = await queries.championBySlug("CHAMPION-170");
+    expect("code" in result).toBe(false);
+    if ("code" in result) return;
+    expect(result.slug).toBe("champion-170");
+
+    const collision = createPublicQueries({ execute: async () => [late, { ...late, champion_id: 171 }] });
+    await expect(collision.championBySlug("champion-170")).resolves.toEqual({ code: "champion_not_found" });
+    await expect(createPublicQueries({ execute: async () => [] }).championBySlug("champion-170")).resolves.toEqual({ code: "dataset_warming" });
   });
 });

@@ -24,6 +24,8 @@ function fakeQueries(overrides: Partial<RouteQueries> = {}): RouteQueries {
   return {
     meta: async () => meta,
     champions: async () => { const value = [summary]; trustedScopes.set(value, "pub-1"); return value; },
+    championDirectory: async () => { const value = [summary]; trustedScopes.set(value, "pub-1"); return value; },
+    championBySlug: async () => champion,
     champion: async () => champion,
     stats: async () => stats,
     methodology: async () => methodology,
