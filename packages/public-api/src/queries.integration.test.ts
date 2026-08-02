@@ -268,6 +268,7 @@ integration("public views and query repository", () => {
     const queries = createPublicQueries(isolated.db);
     const rows = await queries.champions("JINX");
     expect(rows).toHaveLength(1);
+    if ("code" in rows) throw new Error(`unexpected query error: ${rows.code}`);
     publicChampionSummarySchema.parse(rows[0]);
     const source = await isolated.db.execute("SELECT pg_get_viewdef('public_item_stats'::regclass, true) AS definition" as never) as Array<{ definition: string }>;
     expect(JSON.stringify(source)).not.toMatch(/puuid|match_id|raw_final_slots|error_details|riot_api_key/i);

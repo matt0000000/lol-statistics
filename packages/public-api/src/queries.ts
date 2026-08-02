@@ -21,12 +21,13 @@ import {
   publicStatsResponseSchema
 } from "./contracts";
 import { sortStats } from "./sort";
+import { attachPublicationScope } from "./scope";
 
 export type QueryDatabase = { execute: (query: SQL) => Promise<unknown> } | { db: { execute: (query: SQL) => Promise<unknown> } };
 export type PublicStatsInput = { championId: number; role: Role; view: StatsView; sort: StatsSort; includeLowConfidence: boolean };
 export interface PublicQueries {
   meta(): Promise<PublicMeta | PublicQueryError>;
-  champions(search?: string): Promise<PublicChampionSummary[]>;
+  champions(search?: string): Promise<PublicChampionSummary[] | PublicQueryError>;
   champion(championId: number): Promise<PublicChampion | PublicQueryError>;
   stats(input: PublicStatsInput): Promise<PublicStatsResponse | PublicQueryError>;
   methodology(): Promise<PublicMethodology>;
@@ -72,7 +73,7 @@ function numberValue(value: unknown): number { return Number(value ?? 0); }
 function integerValue(value: unknown): number { return Math.trunc(numberValue(value)); }
 
 function publicMeta(row: Row): PublicMeta {
-  const parsed = publicMetaSchema.parse({
+  return publicMetaSchema.parse({
     patch: { version: String(row.patch_version), key: String(row.patch_key) },
     scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
     coverageStartedAt: iso(row.coverage_started_at),
@@ -89,10 +90,10 @@ function publicMeta(row: Row): PublicMeta {
       observationsRejected: integerValue(row.observations_rejected)
     }
   });
-  // Keep publication scope available to the server cache layer without
-  // serializing the immutable identifier in public JSON contracts.
-  if (typeof row.publication_id === "string") Object.defineProperty(parsed, "publicationId", { value: row.publication_id, enumerable: false });
-  return parsed;
+}
+
+function publicationId(row: Row): string | undefined {
+  return typeof row.publication_id === "string" && row.publication_id.length > 0 ? row.publication_id : undefined;
 }
 
 function championFromRow(row: Row): PublicChampion {
@@ -158,42 +159,51 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
   return {
     async meta() {
       const row = firstRow(await execute(sql`SELECT * FROM public_active_publication LIMIT 1`));
-      return row ? publicMeta(row) : publicQueryErrorSchema.parse({ code: "dataset_warming" });
+      if (!row) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
+      const parsed = publicMeta(row);
+      return attachPublicationScope(parsed, publicationId(row));
     },
 
     async champions(search) {
       const pattern = search?.trim() ? `%${search.trim().toLowerCase()}%` : null;
       const rows = await execute(sql`
         WITH active AS (SELECT * FROM public_active_publication LIMIT 1)
-        SELECT c.champion_id, c.slug, c.name, c.icon_url,
-          COALESCE(ARRAY_AGG(DISTINCT b.role ORDER BY b.role) FILTER (WHERE b.role IS NOT NULL), ARRAY[]::role[]) AS roles
-        FROM public_champions c
-        JOIN active a ON a.patch_id = c.patch_id
-        JOIN public_champion_role_baselines b ON b.publication_id = a.publication_id AND b.champion_id = c.champion_id
-        WHERE (${pattern} IS NULL OR lower(c.name) LIKE ${pattern} OR lower(c.slug) LIKE ${pattern})
-        GROUP BY c.champion_id, c.slug, c.name, c.icon_url
-        ORDER BY lower(c.name), c.champion_id
+        SELECT a.publication_id, x.champion_id, x.slug, x.name, x.icon_url, x.roles
+        FROM active a
+        LEFT JOIN (
+          SELECT b.publication_id, c.champion_id, c.slug, c.name, c.icon_url,
+            ARRAY_AGG(DISTINCT b.role ORDER BY b.role) AS roles,
+            c.patch_id
+          FROM public_champions c
+          JOIN public_champion_role_baselines b ON b.champion_id = c.champion_id
+          GROUP BY b.publication_id, c.champion_id, c.slug, c.name, c.icon_url, c.patch_id
+        ) x ON x.publication_id = a.publication_id AND x.patch_id = a.patch_id
+          AND (${pattern} IS NULL OR lower(x.name) LIKE ${pattern} OR lower(x.slug) LIKE ${pattern})
+        ORDER BY lower(x.name), x.champion_id
         LIMIT 50
       `);
-      return rows.map((row) => publicChampionSummarySchema.parse({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) }));
+      if (rows.length === 0) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
+      const scope = rows.find((row) => publicationId(row))?.publication_id;
+      const output = rows.filter((row) => row.champion_id != null).map((row) => publicChampionSummarySchema.parse({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) }));
+      return attachPublicationScope(output, scope);
     },
 
     async champion(championId) {
       const rows = await execute(sql`
         WITH active AS (SELECT * FROM public_active_publication LIMIT 1)
-        SELECT c.champion_id, c.slug, c.name, c.icon_url, c.splash_url,
+        SELECT a.publication_id, c.champion_id, c.slug, c.name, c.icon_url, c.splash_url,
           COALESCE(ARRAY_AGG(DISTINCT b.role ORDER BY b.role) FILTER (WHERE b.role IS NOT NULL), ARRAY[]::role[]) AS roles
         FROM public_champions c
         JOIN active a ON a.patch_id = c.patch_id
         LEFT JOIN public_champion_role_baselines b ON b.publication_id = a.publication_id AND b.champion_id = c.champion_id
         WHERE c.champion_id = ${championId}
-        GROUP BY c.champion_id, c.slug, c.name, c.icon_url, c.splash_url
+        GROUP BY a.publication_id, c.champion_id, c.slug, c.name, c.icon_url, c.splash_url
       `);
       if (rows.length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
       const champion = championFromRow(rows[0]!);
       champion.roles = parseRoles(rows[0]!);
       if (champion.roles.length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
-      return publicChampionSchema.parse(champion);
+      return attachPublicationScope(publicChampionSchema.parse(champion), publicationId(rows[0]!));
     },
 
     async stats(input) {
@@ -247,7 +257,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
       champion.roles = parseRoles(first);
       if (champion.roles.length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
       const stats = rows.filter((row) => row.stat_key != null).map((row) => statRow(row, minimumSample, baseline.sample, baseline.wins));
-      return publicStatsResponseSchema.parse({
+      const parsed = publicStatsResponseSchema.parse({
         meta: publicMeta(first),
         champion,
         role: input.role,
@@ -258,6 +268,9 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         minimumSample,
         rows: sortStats(stats, input.sort).slice(0, 100)
       });
+      const scope = publicationId(first);
+      attachPublicationScope(parsed.meta, scope);
+      return attachPublicationScope(parsed, scope);
     },
 
     async methodology() {

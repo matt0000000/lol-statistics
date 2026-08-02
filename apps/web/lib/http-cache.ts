@@ -8,6 +8,23 @@ export function publicationEtag(publicationId: string, resourceKey: string): str
   return `"publication-${safePublication}-${safeResource}"`;
 }
 
+/** Content-derived strong validator for resources without a publication scope. */
+export async function contentEtag(body: unknown): Promise<string> {
+  const serialized = JSON.stringify(body);
+  const bytes = new TextEncoder().encode(serialized);
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    const digest = await subtle.digest("SHA-256", bytes);
+    const hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    return `"sha256-${hex}"`;
+  }
+  // Web Crypto is available in supported Next runtimes; this deterministic
+  // fallback keeps tests and restricted runtimes cache-safe if it is absent.
+  let hash = 2166136261;
+  for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+  return `"content-${(hash >>> 0).toString(16).padStart(8, "0")}"`;
+}
+
 export function matchesIfNoneMatch(request: Request, etag: string): boolean {
   const header = request.headers.get("if-none-match");
   if (!header) return false;
