@@ -6,6 +6,7 @@ import ts from "typescript";
 type ImportEdge = { specifier: string; source: string };
 type ImportParse = { edges: ImportEdge[]; diagnostics: ts.Diagnostic[] };
 type ResolverConfig = { options: ts.CompilerOptions; configPath?: string };
+type SelectedPathMapping = { targets: string[]; substitution: string };
 export type SecurityScanResult = {
   clientFiles: string[];
   violations: string[];
@@ -111,9 +112,9 @@ async function configFor(root: string): Promise<ResolverConfig> {
   }
 }
 
-async function nearestConfig(fileName: string, scanRoot: string, fallback: ResolverConfig, cache: Map<string, Promise<ResolverConfig>>): Promise<ResolverConfig> {
+async function nearestConfig(fileName: string, boundaryRoot: string, fallback: ResolverConfig, cache: Map<string, Promise<ResolverConfig>>): Promise<ResolverConfig> {
   let directory = dirname(fileName);
-  while (inside(scanRoot, directory)) {
+  while (inside(boundaryRoot, directory)) {
     const configPath = join(directory, "tsconfig.json");
     if (ts.sys.fileExists(configPath)) {
       let config = cache.get(configPath);
@@ -123,7 +124,7 @@ async function nearestConfig(fileName: string, scanRoot: string, fallback: Resol
       }
       return config;
     }
-    if (directory === scanRoot) break;
+    if (directory === boundaryRoot) break;
     directory = dirname(directory);
   }
   return fallback;
@@ -158,21 +159,60 @@ function resolverHost(workspaceRoot: string): { host: ts.ModuleResolutionHost; b
 }
 
 function configuredPath(specifier: string, options: ts.CompilerOptions): boolean {
-  return Object.keys(options.paths ?? {}).some((pattern) => {
+  return selectedPathMapping(specifier, options) !== undefined;
+}
+
+function selectedPathMapping(specifier: string, options: ts.CompilerOptions): SelectedPathMapping | undefined {
+  const paths = options.paths ?? {};
+  const exact = paths[specifier];
+  if (exact) return { targets: exact, substitution: "" };
+  const matches: Array<{ pattern: string; targets: string[]; substitution: string; prefixLength: number; suffixLength: number }> = [];
+  for (const [pattern, targets] of Object.entries(paths)) {
     const star = pattern.indexOf("*");
-    if (star < 0) return pattern === specifier;
-    return specifier.startsWith(pattern.slice(0, star)) && specifier.endsWith(pattern.slice(star + 1)) && specifier.length >= pattern.length - 1;
-  });
+    if (star < 0) continue;
+    const prefix = pattern.slice(0, star);
+    const suffix = pattern.slice(star + 1);
+    if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix) || specifier.length < prefix.length + suffix.length) continue;
+    matches.push({ pattern, targets, substitution: specifier.slice(prefix.length, specifier.length - suffix.length || undefined), prefixLength: prefix.length, suffixLength: suffix.length });
+  }
+  matches.sort((left, right) => right.prefixLength - left.prefixLength || right.suffixLength - left.suffixLength || left.pattern.localeCompare(right.pattern));
+  const match = matches[0];
+  return match ? { targets: match.targets, substitution: match.substitution } : undefined;
+}
+
+async function validateConfiguredTargets(specifier: string, config: ResolverConfig, allowedRoots: readonly string[]): Promise<boolean> {
+  const mapping = selectedPathMapping(specifier, config.options);
+  if (!mapping) return true;
+  const baseUrl = config.options.baseUrl ?? (config.configPath ? dirname(config.configPath) : undefined);
+  if (!baseUrl) return false;
+  for (const target of mapping.targets) {
+    const substituted = target.replace("*", mapping.substitution);
+    const base = resolve(substituted.startsWith(sep) ? substituted : join(baseUrl, substituted));
+    for (const candidate of candidatePaths(base)) {
+      if (!allowedRoots.some((root) => inside(root, candidate))) return false;
+      try {
+        const canonical = await realpath(candidate);
+        if (!allowedRoots.some((root) => inside(root, canonical))) return false;
+      } catch { /* unresolved targets are checked lexically and remain unresolved */ }
+    }
+  }
+  return true;
 }
 
 async function resolveImport(specifier: string, from: string, workspaceRoot: string, config: ResolverConfig, allowedRoots: readonly string[]): Promise<{ path?: string; unresolvedAlias?: boolean }> {
+  if (!(await validateConfiguredTargets(specifier, config, allowedRoots))) return { unresolvedAlias: true };
   const resolver = resolverHost(workspaceRoot);
   const resolved = ts.resolveModuleName(specifier, from, config.options, resolver.host).resolvedModule;
   if (configuredPath(specifier, config.options) && resolver.blocked.value) return { unresolvedAlias: true };
   if (resolved) {
     try {
       const canonical = await realpath(resolved.resolvedFileName);
-      if (canonical.split(sep).includes("node_modules") || !allowedRoots.some((root) => inside(root, canonical))) return { unresolvedAlias: true };
+      const external = canonical.split(sep).includes("node_modules") || resolved.isExternalLibraryImport;
+      if (external) {
+        if (configuredPath(specifier, config.options) || specifier.startsWith(".") || /^@lol\//.test(specifier)) return { unresolvedAlias: true };
+        return {};
+      }
+      if (!allowedRoots.some((root) => inside(root, canonical))) return { unresolvedAlias: true };
       return { path: canonical };
     } catch { return { unresolvedAlias: true }; }
   }
@@ -227,7 +267,7 @@ export async function scanClientBoundary(webRoot: string): Promise<SecurityScanR
       if (/@lol\/(?:database|collector)(?:\/|$)|(?:^|[/\\])(?:database|collector)(?:[/\\]|$)/i.test(edge.specifier)) {
         violations.push(`${relative(workspaceRoot, canonical)} imports forbidden ${edge.specifier}`);
       }
-      const config = await nearestConfig(canonical, root, rootConfig, configCache);
+      const config = await nearestConfig(canonical, canonicalWorkspaceRoot, rootConfig, configCache);
       const resolution = await resolveImport(edge.specifier, canonical, workspaceRoot, config, allowedRoots);
       if (resolution.unresolvedAlias || (!resolution.path && (edge.specifier.startsWith(".") || configuredPath(edge.specifier, config.options)))) violations.push(`${relative(workspaceRoot, canonical)} has unresolved alias ${edge.specifier}`);
       if (resolution.path) await visit(resolution.path);

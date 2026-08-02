@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { scanClientBoundary } from "../lib/security-boundary";
 
@@ -74,5 +75,30 @@ describe("web security boundary", () => {
     expect(output).toMatch(/puuid/);
     expect(output).toMatch(/ladder snapshots/);
     expect(output).toMatch(/participant observations/);
+  });
+
+  it("fails closed when an alias target array probes an existing non-node_modules path outside the workspace", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-unsafe-non-node");
+    const outside = "/tmp/security-boundary-round5";
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "private.ts"), 'export default "puuid";');
+    try {
+      const result = await scanClientBoundary(root);
+      expect(result.violations.join("\n")).toMatch(/unresolved alias @unsafe-non-node\//);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a traversed workspace package's nearest tsconfig for private aliases", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-package-boundary");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/puuid/);
+  });
+
+  it("does not flag ordinary bare third-party imports resolved through node_modules", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-external-import");
+    const result = await scanClientBoundary(root);
+    expect(result.violations, result.violations.join("\n")).toEqual([]);
   });
 });

@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@unsafe-non-node/*": ["/tmp/security-boundary-round5/*", "./benign/*"] }
+  }
+}
