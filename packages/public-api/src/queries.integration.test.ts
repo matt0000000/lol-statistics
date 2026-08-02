@@ -1,11 +1,43 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
+import { wilson95 } from "@lol/domain";
 import { aggregatePublications, baselineAggregates, bootsAggregates, champions, collectionRuns, combinationAggregates, createMigratedTestDatabase, itemAggregates, items, patches } from "@lol/database";
 import { createPublicQueries } from "./queries";
 import { publicChampionSchema, publicChampionSummarySchema, publicMethodologySchema, publicStatsResponseSchema } from "./contracts";
 
 const sourceUrl = process.env.TEST_DATABASE_URL;
 const integration = describe.skipIf(!sourceUrl);
+
+type FixtureStat = { key: string; wins: number; losses: number; sample: number };
+type Sort = "adjusted" | "winRate" | "buildRate" | "sample";
+
+function cCollationCompare(left: string, right: string): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = left.charCodeAt(index) - right.charCodeAt(index);
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+}
+
+function independentReference(rows: readonly FixtureStat[], sort: Sort, includeLowConfidence: boolean): FixtureStat[] {
+  const filtered = includeLowConfidence ? [...rows] : rows.filter((row) => row.sample >= 100);
+  const score = (row: FixtureStat): number | null => row.sample >= 100 ? wilson95(row.wins, row.sample).lower : null;
+  return filtered.sort((left, right) => {
+    if (sort === "adjusted") {
+      const leftScore = score(left);
+      const rightScore = score(right);
+      if (leftScore === null && rightScore !== null) return 1;
+      if (leftScore !== null && rightScore === null) return -1;
+      if (leftScore !== null && rightScore !== null && leftScore !== rightScore) return rightScore > leftScore ? 1 : -1;
+    } else {
+      const leftValue = sort === "winRate" ? left.wins / left.sample : sort === "buildRate" ? left.sample / 1000 : left.sample;
+      const rightValue = sort === "winRate" ? right.wins / right.sample : sort === "buildRate" ? right.sample / 1000 : right.sample;
+      if (leftValue !== rightValue) return rightValue > leftValue ? 1 : -1;
+    }
+    return right.sample - left.sample || cCollationCompare(left.key, right.key);
+  }).slice(0, 100);
+}
 
 integration("public views and query repository", () => {
   let isolated: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
@@ -29,7 +61,7 @@ integration("public views and query repository", () => {
     ]);
     await isolated.db.insert(items).values([3031, 6672, 6692, 3006].map((itemId) => ({ patchId: patch!.id, itemId, normalizedBaseId: itemId, category: itemId === 3006 ? "BOOTS" as const : "CORE" as const, classificationReason: "test", name: `Item ${itemId}`, price: 100, iconUrl: `https://ddragon.leagueoflegends.com/cdn/16.16.1/img/item/${itemId}.png` })));
     await isolated.db.insert(baselineAggregates).values([
-      { publicationId: publication!.id, championId: 222, role: "BOTTOM", wins: 60, losses: 40, sample: 100 },
+      { publicationId: publication!.id, championId: 222, role: "BOTTOM", wins: 600, losses: 400, sample: 1000 },
       { publicationId: publication!.id, championId: 222, role: "UTILITY", wins: 55, losses: 45, sample: 100 },
       { publicationId: publication!.id, championId: 1, role: "MIDDLE", wins: 70, losses: 30, sample: 100 }
     ]);
@@ -74,8 +106,8 @@ integration("public views and query repository", () => {
     }
   });
 
-  it("keeps the exact adjusted top 100 when SQL bounds a large candidate set", async () => {
-    const candidateIds = Array.from({ length: 105 }, (_, index) => 7000 + index);
+  it("keeps the exact top 100 for every sort when SQL bounds a mixed-confidence candidate set", async () => {
+    const candidateIds = Array.from({ length: 130 }, (_, index) => 7000 + index);
     await isolated.db.insert(items).values(candidateIds.map((itemId) => ({
       patchId: activePatchId,
       itemId,
@@ -91,19 +123,37 @@ integration("public views and query repository", () => {
       championId: 222,
       role: "BOTTOM" as const,
       itemId,
-      // The 100-game candidate has a much higher Wilson lower bound than the
-      // 500-game candidates and must survive SQL LIMIT 100.
-      wins: index === 0 ? 99 : 260,
-      losses: index === 0 ? 1 : 240,
-      sample: index === 0 ? 100 : 500
+      wins: index === 0 ? 99 : index < 90 ? 45 + (index % 53) : 49,
+      losses: index === 0 ? 1 : index < 90 ? (100 + (index % 7)) - (45 + (index % 53)) : 50,
+      sample: index === 0 ? 100 : index < 90 ? 100 + (index % 7) : 99
     })));
     try {
-      const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: false });
-      expect("code" in response).toBe(false);
-      if (!("code" in response)) {
-        expect(response.rows).toHaveLength(100);
-        expect(response.rows[0]?.key).toBe(String(candidateIds[0]));
-        expect(response.rows.some((row) => row.key === String(candidateIds[0]))).toBe(true);
+      const fixtureRows: FixtureStat[] = [
+        { key: "3031", wins: 60, losses: 40, sample: 100 },
+        { key: "6672", wins: 40, losses: 40, sample: 80 },
+        ...candidateIds.map((itemId, index) => ({
+          key: String(itemId),
+          wins: index === 0 ? 99 : index < 90 ? 45 + (index % 53) : 49,
+          losses: index === 0 ? 1 : index < 90 ? (100 + (index % 7)) - (45 + (index % 53)) : 50,
+          sample: index === 0 ? 100 : index < 90 ? 100 + (index % 7) : 99
+        }))
+      ];
+      expect(fixtureRows.length).toBeGreaterThan(100);
+      for (const sort of ["adjusted", "winRate", "buildRate", "sample"] as const) {
+        for (const includeLowConfidence of [true, false]) {
+          const expected = independentReference(fixtureRows, sort, includeLowConfidence);
+          const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view: "items", sort, includeLowConfidence });
+          expect("code" in response).toBe(false);
+          if ("code" in response) continue;
+          expect(response.rows.map((row) => row.key)).toEqual(expected.map((row) => row.key));
+          expect(response.rows).toHaveLength(Math.min(100, expected.length));
+          expect(response.rows[0]?.key).toBe(expected[0]?.key);
+          expect(response.rows.at(-1)?.key).toBe(expected.at(-1)?.key);
+          expect(response.rows[99]?.key).toBe(expected[99]?.key);
+          expect(response.rows.some((row) => row.confidence === "low")).toBe(expected.some((row) => row.sample < 100));
+          const WilsonReference = wilson95(99, 100).lower;
+          expect(response.rows.find((row) => row.key === "7000")?.adjustedScore).toBeCloseTo(WilsonReference, 12);
+        }
       }
     } finally {
       await isolated.db.delete(itemAggregates).where(inArray(itemAggregates.itemId, candidateIds));
@@ -118,6 +168,27 @@ integration("public views and query repository", () => {
     if (!("code" in champion)) expect(champion.roles).toEqual(["BOTTOM", "UTILITY"]);
     expect(await queries.champion(999)).toEqual({ code: "champion_not_found" });
     publicChampionSchema.parse(champion);
+  });
+
+  it("uses C collation for digit and colon tie keys", async () => {
+    const tieKeys = ["10:20", "1:10", "1:2", "1:20"];
+    await isolated.db.insert(combinationAggregates).values(tieKeys.map((combinationKey) => ({
+      publicationId: activePublicationId,
+      championId: 222,
+      role: "BOTTOM" as const,
+      size: 2,
+      combinationKey,
+      wins: 50,
+      losses: 50,
+      sample: 100
+    })));
+    try {
+      const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view: "pairs", sort: "sample", includeLowConfidence: true });
+      expect("code" in response).toBe(false);
+      if (!("code" in response)) expect(response.rows.slice(0, tieKeys.length).map((row) => row.key)).toEqual(tieKeys);
+    } finally {
+      await isolated.db.delete(combinationAggregates).where(inArray(combinationAggregates.combinationKey, tieKeys));
+    }
   });
 
   it("bounds search and isolates stale publication data", async () => {
