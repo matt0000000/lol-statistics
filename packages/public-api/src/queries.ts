@@ -72,7 +72,7 @@ function numberValue(value: unknown): number { return Number(value ?? 0); }
 function integerValue(value: unknown): number { return Math.trunc(numberValue(value)); }
 
 function publicMeta(row: Row): PublicMeta {
-  return publicMetaSchema.parse({
+  const parsed = publicMetaSchema.parse({
     patch: { version: String(row.patch_version), key: String(row.patch_key) },
     scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
     coverageStartedAt: iso(row.coverage_started_at),
@@ -89,6 +89,10 @@ function publicMeta(row: Row): PublicMeta {
       observationsRejected: integerValue(row.observations_rejected)
     }
   });
+  // Keep publication scope available to the server cache layer without
+  // serializing the immutable identifier in public JSON contracts.
+  if (typeof row.publication_id === "string") Object.defineProperty(parsed, "publicationId", { value: row.publication_id, enumerable: false });
+  return parsed;
 }
 
 function championFromRow(row: Row): PublicChampion {

@@ -29,6 +29,7 @@
     "apps/web": {
       "name": "@lol/web",
       "dependencies": {
+        "@lol/database": "workspace:*",
         "@lol/public-api": "workspace:*",
         "next": "^16.2.12",
         "react": "^19.2.8",
