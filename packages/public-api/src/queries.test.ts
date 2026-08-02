@@ -120,7 +120,9 @@ function sqlOrder(sql: string): StatsSort {
 
 describe("stats query boundary", () => {
   it("keeps the bounded SQL window aligned with an independent C-order reference for every sort", async () => {
-    const keys = ["1", "10", "10:20", "1:10", "1:2", "1:20", ...Array.from({ length: 125 }, (_, index) => String(2000 + index))];
+    // The items view is a one-item view; combination-key ordering is covered
+    // by the dedicated pairs/trios contract matrix.
+    const keys = ["1", "10", ...Array.from({ length: 125 }, (_, index) => String(2000 + index))];
     const sourceRows = keys.map((stat_key, index) => {
       const sample = index < 90 ? 100 + (index % 7) : 99;
       const wins = Math.min(sample, 45 + (index % 53));

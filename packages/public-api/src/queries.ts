@@ -71,8 +71,16 @@ function iso(value: unknown): string {
   return date.toISOString();
 }
 
-function numberValue(value: unknown): number { return Number(value ?? 0); }
-function integerValue(value: unknown): number { return Math.trunc(numberValue(value)); }
+function numberValue(value: unknown): number {
+  const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
+  if (!Number.isFinite(parsed)) throw new Error("malformed public statistic value");
+  return parsed;
+}
+function integerValue(value: unknown): number {
+  const parsed = numberValue(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error("malformed public statistic count");
+  return parsed;
+}
 
 /** Locale-independent, accent-insensitive text folding for user search. */
 export function normalizeChampionSearch(value: string): string {
@@ -131,13 +139,20 @@ function baselineFromRow(row: Row) {
   const wins = integerValue(row.baseline_wins ?? row.wins);
   const losses = integerValue(row.baseline_losses ?? row.losses);
   const sample = integerValue(row.baseline_sample ?? row.sample);
+  if (wins + losses !== sample || wins > sample) throw new Error("malformed public baseline counts");
   return { wins, losses, sample, winRate: sample === 0 ? 0 : wins / sample };
 }
 
 function itemIds(value: unknown): number[] {
-  if (Array.isArray(value)) return value.map(integerValue);
-  if (typeof value === "string") return value.replace(/[{}]/g, "").split(",").filter(Boolean).map(Number);
-  return [];
+  let values: unknown[];
+  if (Array.isArray(value)) values = value;
+  else if (typeof value === "string") {
+    const text = value.replace(/[{}]/g, "");
+    values = text.length === 0 ? [] : text.split(",");
+  } else throw new Error("malformed public item ids");
+  const ids = values.map(integerValue);
+  if (ids.length < 1 || ids.length > 3 || ids.some((id, index) => index > 0 && id < ids[index - 1]!)) throw new Error("non-canonical public item ids");
+  return ids;
 }
 
 function itemMetadata(value: unknown, ids: number[], row: Row): Array<{ id: number; name: string; iconUrl: string }> {
@@ -171,8 +186,11 @@ function statRow(row: Row, minimumSample: number, baselineSample: number, baseli
   const interval = wilson95(wins, sample);
   const recommended = sample >= minimumSample;
   const ids = itemIds(row.item_ids);
+  const key = String(row.stat_key);
+  if (key !== ids.join(":")) throw new Error("non-canonical public statistic key");
+  if (sample <= 0 || wins + losses !== sample || sample > baselineSample) throw new Error("malformed public statistic counts");
   return {
-    key: String(row.stat_key),
+    key,
     itemIds: ids,
     itemMetadata: itemMetadata(row.item_metadata, ids, row),
     wins,

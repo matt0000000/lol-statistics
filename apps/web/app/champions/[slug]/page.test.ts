@@ -42,6 +42,10 @@ describe("champion page resolver", () => {
     [{ role: "toString" }, null, "That role selection"]
   ])("does not default or trust invalid role values (%j)", async (searchParams, selectedRole, unavailableRole) => {
     const result = await resolveChampionPage({ slug: "jinx", searchParams, queries: queries() });
+    if ("role" in searchParams && selectedRole === null && unavailableRole !== "TOP") {
+      expect(result).toMatchObject({ kind: "redirect", location: "/champions/jinx" });
+      return;
+    }
     expect(result).toMatchObject({ kind: "ready", selectedRole, unavailableRole });
   });
 
@@ -53,7 +57,7 @@ describe("champion page resolver", () => {
 
   it("calls stats only for an explicit valid role and normalizes safe defaults", async () => {
     const calls: unknown[] = [];
-    const result = await resolveChampionPage({ slug: "jinx", searchParams: { role: "BOTTOM", view: ["pairs", "items"], sort: "invalid", lowConfidence: "true" }, queries: queries({ stats: async (input) => { calls.push(input); return stats; } }) });
+    const result = await resolveChampionPage({ slug: "jinx", searchParams: { role: "BOTTOM" }, queries: queries({ stats: async (input) => { calls.push(input); return stats; } }) });
     expect(calls).toEqual([{ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: false }]);
     expect(result).toMatchObject({ kind: "ready", stats });
     await resolveChampionPage({ slug: "jinx", searchParams: {}, queries: queries({ stats: async () => { throw new Error("must not call"); } }) });
@@ -63,5 +67,14 @@ describe("champion page resolver", () => {
     expect(parseStatsParams({ role: "BOTTOM", view: "trios", sort: "sample", lowConfidence: "1" })).toEqual({ role: "BOTTOM", view: "trios", sort: "sample", lowConfidence: true });
     expect(parseStatsParams({ role: ["BOTTOM"], lowConfidence: ["1", "0"] })).toEqual({ role: null, view: "items", sort: "adjusted", lowConfidence: false });
     await expect(resolveChampionPage({ slug: "JINX", searchParams: { role: "BOTTOM", view: "pairs", sort: "sample", lowConfidence: "1" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=BOTTOM&view=pairs&sort=sample&lowConfidence=1" });
+  });
+
+  it("canonicalizes controls even when the slug is already canonical", async () => {
+    await expect(resolveChampionPage({ slug: "jinx", searchParams: { role: "BOTTOM", view: "items", sort: "adjusted", lowConfidence: "0", extra: "drop" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=BOTTOM" });
+    await expect(resolveChampionPage({ slug: "jinx", searchParams: { role: "BOTTOM", view: ["pairs", "items"] }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=BOTTOM" });
+    await expect(resolveChampionPage({ slug: "jinx", searchParams: { role: "TOP" }, queries: queries() })).resolves.toMatchObject({ kind: "ready", unavailableRole: "TOP" });
+    await expect(resolveChampionPage({ slug: "JINX", searchParams: { role: "ADC" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=ADC" });
+    await expect(resolveChampionPage({ slug: "jinx", searchParams: { role: "ADC" }, queries: queries() })).resolves.toMatchObject({ kind: "ready", selectedRole: null, unavailableRole: "That role selection" });
+    await expect(resolveChampionPage({ slug: "jinx", searchParams: { role: "__proto__" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx" });
   });
 });

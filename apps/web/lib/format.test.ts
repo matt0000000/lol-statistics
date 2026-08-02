@@ -10,6 +10,9 @@ describe("statistics formatters", () => {
 
   it("uses an en dash for non-finite values and normalizes negative zero", () => {
     expect(formatPercent(Number.NaN)).toBe("—");
-    expect(formatDelta(-0)).toBe("0.0 pp");
+    expect(formatDelta(-0)).toBe("+0.0 pp");
+    expect(formatPercent(-0.0001)).toBe("0.0%");
+    expect(formatDelta(-0.0004)).toBe("+0.0 pp");
+    expect(formatDelta(-0.001)).toBe("−0.1 pp");
   });
 });

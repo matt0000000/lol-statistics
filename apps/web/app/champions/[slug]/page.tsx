@@ -18,7 +18,7 @@ export type ChampionPageResolution =
   | { kind: "ready"; champion: PublicChampion; meta: PublicMeta | null; warming: boolean; selectedRole: Role | null; unavailableRole: string | null; stats: PublicStatsResponse | null; statsError: PublicQueryError["code"] | "error" | null };
 
 function roleState(champion: PublicChampion, searchParams: SearchParams): Pick<ChampionPageResolution & { kind: "ready" }, "selectedRole" | "unavailableRole"> {
-  const rawRole = searchParams.role;
+  const rawRole = Object.prototype.hasOwnProperty.call(searchParams, "role") ? searchParams.role : undefined;
   const roleValue = Array.isArray(rawRole) ? null : rawRole;
   const selectedRole: Role | null = roleValue && isRole(roleValue) && champion.roles.includes(roleValue) ? roleValue : null;
   const unavailableRole = rawRole !== undefined && (Array.isArray(rawRole) || !isRole(roleValue) || !champion.roles.includes(roleValue))
@@ -27,26 +27,47 @@ function roleState(champion: PublicChampion, searchParams: SearchParams): Pick<C
   return { selectedRole, unavailableRole };
 }
 
+function rawSearchParams(searchParams: SearchParams): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (Array.isArray(value)) value.forEach((entry) => params.append(key, entry));
+    else if (value !== undefined) params.append(key, value);
+  }
+  return params;
+}
+
+const SAFE_UNAVAILABLE_ROLE = /^[A-Za-z][A-Za-z0-9 _-]{0,31}$/;
+const BLOCKED_ROLE_NAMES = new Set(["__proto__", "constructor", "prototype", "tostring", "valueof", "hasownproperty"]);
+function safeUnavailableRole(value: unknown): value is string {
+  return typeof value === "string" && value === value.trim() && SAFE_UNAVAILABLE_ROLE.test(value) && !BLOCKED_ROLE_NAMES.has(value.toLowerCase());
+}
+
 function canonicalLocation(champion: PublicChampion, requestedSlug: string, searchParams: SearchParams): string | undefined {
-  if (requestedSlug === champion.slug) return undefined;
   const params = new URLSearchParams();
   const parsed = parseStatsParams(searchParams);
-  if (parsed.role) params.set("role", parsed.role);
+  const rawRole = Object.prototype.hasOwnProperty.call(searchParams, "role") ? searchParams.role : undefined;
+  // A known role that is not published for this champion is retained so the
+  // canonical page can explain the unavailable selection. Invalid, duplicate,
+  // array, control, and oversized values are omitted.
+  if (parsed.role && champion.roles.includes(parsed.role)) params.set("role", parsed.role);
+  else if (safeUnavailableRole(rawRole)) params.set("role", rawRole);
   if (parsed.view !== "items") params.set("view", parsed.view);
   if (parsed.sort !== "adjusted") params.set("sort", parsed.sort);
   if (parsed.lowConfidence) params.set("lowConfidence", "1");
   const query = params.toString();
-  return `/champions/${encodeURIComponent(champion.slug)}${query ? `?${query}` : ""}`;
+  const location = `/champions/${encodeURIComponent(champion.slug)}${query ? `?${query}` : ""}`;
+  const rawLocation = `/champions/${encodeURIComponent(requestedSlug)}${rawSearchParams(searchParams).toString() ? `?${rawSearchParams(searchParams).toString()}` : ""}`;
+  return rawLocation === location ? undefined : location;
 }
 
 export function parseStatsParams(searchParams: SearchParams): { role: Role | null; view: StatsView; sort: StatsSort; lowConfidence: boolean } {
-  const roleValue = searchParams.role;
+  const roleValue = Object.prototype.hasOwnProperty.call(searchParams, "role") ? searchParams.role : undefined;
   const role = typeof roleValue === "string" && isRole(roleValue) ? roleValue : null;
-  const rawView = searchParams.view;
+  const rawView = Object.prototype.hasOwnProperty.call(searchParams, "view") ? searchParams.view : undefined;
   const view = typeof rawView === "string" && statsViewSchema.safeParse(rawView).success ? rawView as StatsView : "items";
-  const rawSort = searchParams.sort;
+  const rawSort = Object.prototype.hasOwnProperty.call(searchParams, "sort") ? searchParams.sort : undefined;
   const sort = typeof rawSort === "string" && statsSortSchema.safeParse(rawSort).success ? rawSort as StatsSort : "adjusted";
-  const rawLow = searchParams.lowConfidence;
+  const rawLow = Object.prototype.hasOwnProperty.call(searchParams, "lowConfidence") ? searchParams.lowConfidence : undefined;
   return { role, view, sort, lowConfidence: rawLow === "1" };
 }
 

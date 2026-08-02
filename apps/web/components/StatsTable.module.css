@@ -1,13 +1,13 @@
-.tableWrap { overflow: visible; }
-.table { width: 100%; border-collapse: collapse; }
+.tableWrap { width: 100%; max-width: 100%; overflow: visible; }
+.table { width: 100%; max-width: 100%; border-collapse: collapse; table-layout: fixed; }
 .table caption { margin-bottom: 12px; text-align: left; color: var(--muted); font-size: .85rem; }
 .table th, .table td { padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 .table th { color: var(--muted); font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; }
 .table th a { min-height: 44px; display: inline-flex; align-items: center; color: inherit; text-decoration: none; }
 .table th a:hover, .table th a[aria-current="page"] { color: var(--accent); }
-.itemCell { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.itemCell { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .itemCell img { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; background: var(--panel-2); }
-.itemNames { display: flex; flex-wrap: wrap; gap: 4px; }
+.itemNames { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .itemNames span + span::before { content: " · "; color: var(--muted); }
 .confidence { font-size: .78rem; font-weight: 700; }
 .recommended { color: var(--accent); }
@@ -17,12 +17,12 @@
 .empty a { color: var(--accent); font-weight: 700; }
 .summary { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 18px; color: var(--muted); }
 .summary strong { color: var(--text); }
-@media (max-width: 719px) {
+@media (max-width: 959px) {
   .tableWrap { overflow: visible; }
   .table, .table thead, .table tbody, .table tr, .table th, .table td { display: block; }
   .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   .table tr { margin-bottom: 12px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-  .table td { display: grid; grid-template-columns: minmax(7.5rem, 42%) 1fr; gap: 8px; padding: 8px 4px; border: 0; }
+  .table td { display: grid; grid-template-columns: minmax(7.5rem, 42%) minmax(0, 1fr); gap: 8px; max-width: 100%; padding: 8px 4px; border: 0; overflow-wrap: anywhere; }
   .table td::before { content: attr(data-label); color: var(--muted); font-size: .74rem; font-weight: 700; text-transform: uppercase; }
   .itemCell { min-width: 0; }
 }

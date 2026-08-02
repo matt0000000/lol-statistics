@@ -7,14 +7,18 @@ function finite(value: number): number | null {
 
 export function formatPercent(value: number): string {
   const normalized = finite(value);
-  return normalized === null ? "—" : percentFormatter.format(normalized);
+  if (normalized === null) return "—";
+  const rounded = Number((normalized * 100).toFixed(1)) / 100;
+  return percentFormatter.format(Object.is(rounded, -0) ? 0 : rounded);
 }
 
 export function formatDelta(value: number): string {
   const normalized = finite(value);
   if (normalized === null) return "—";
-  const scaled = normalized * 100;
-  const sign = scaled > 0 ? "+" : scaled < 0 ? "−" : "";
+  // Round before choosing the sign so values that display as zero never leak
+  // a misleading negative sign (for example -0.0004 -> +0.0 pp).
+  const scaled = Number((normalized * 100).toFixed(1));
+  const sign = scaled >= 0 ? "+" : "−";
   return `${sign}${Math.abs(scaled).toFixed(1)} pp`;
 }
 
