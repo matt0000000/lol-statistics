@@ -10,7 +10,10 @@ export type DiscoveryRepository = {
   markUnavailable?: (runId: string, matchId: string) => Promise<void>;
   pending?: (runId: string) => Promise<{ matchId: string }[]>;
   markProcessed?: (runId: string, matchId: string) => Promise<void>;
+  markOutOfScope?: (runId: string, matchId: string, observationsRejected: number) => Promise<void>;
 };
+
+const MAX_PARTICIPANTS = 10;
 
 export class MatchesRepository implements DiscoveryRepository {
   constructor(private readonly db: any) {}
@@ -88,6 +91,29 @@ export class MatchesRepository implements DiscoveryRepository {
       if (!existing[0]) throw new Error("discovered match not found");
       // UNAVAILABLE is terminal and intentionally retains its redacted reason.
       if (existing[0].status !== "UNAVAILABLE") throw new Error("discovered match has invalid status");
+    });
+  }
+
+  /** Checkpoints a deterministic out-of-patch payload without retaining it. */
+  async markOutOfScope(runId: string, matchId: string, observationsRejected: number): Promise<void> {
+    validateRunId(runId);
+    if (!MATCH_ID.test(matchId)) throw new Error("invalid match identifier");
+    if (!Number.isSafeInteger(observationsRejected) || observationsRejected < 0 || observationsRejected > MAX_PARTICIPANTS) throw new Error("invalid rejected observation count");
+    await this.db.transaction(async (tx: any) => {
+      await assertEligibleRun(tx, runId, true);
+      const updated = await tx.update(discoveredMatches).set({ status: "PROCESSED", unavailableReason: null })
+        .where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, matchId), eq(discoveredMatches.status, "PENDING")))
+        .returning({ matchId: discoveredMatches.matchId });
+      if (updated.length === 1) {
+        await tx.update(collectionRuns).set({ matchesIngested: sql`${collectionRuns.matchesIngested} + 1`, observationsRejected: sql`${collectionRuns.observationsRejected} + ${observationsRejected}`, updatedAt: new Date() }).where(eq(collectionRuns.id, runId));
+        return;
+      }
+      const existing = await tx.select({ status: discoveredMatches.status }).from(discoveredMatches)
+        .where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, matchId))).limit(1);
+      if (!existing[0]) throw new Error("discovered match not found");
+      if (existing[0].status === "UNAVAILABLE") return;
+      if (existing[0].status !== "PROCESSED") throw new Error("discovered match has invalid status");
+      // A repeated checkpoint is intentionally a no-op, including counters.
     });
   }
 

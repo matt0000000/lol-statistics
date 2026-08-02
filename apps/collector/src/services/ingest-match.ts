@@ -59,12 +59,31 @@ export class IngestMatchError extends Error {
   constructor(readonly code: "empty_participants") { super(`match ingestion failed (${code})`); }
 }
 
+/** Payload-free deterministic signal for a match outside the run's patch. */
+export class OutOfScopeMatchError extends Error {
+  readonly code = "out_of_patch" as const;
+  readonly participantCount: number;
+  readonly result: OutOfScopeMatchResult;
+  constructor(participantCount: number) {
+    super("match ingestion skipped (out_of_patch)");
+    this.name = "OutOfScopeMatchError";
+    this.participantCount = Math.max(0, Math.min(10, Number.isSafeInteger(participantCount) ? participantCount : 0));
+    this.result = { code: this.code, participantCount: this.participantCount };
+  }
+}
+
+export type OutOfScopeMatchResult = { code: "out_of_patch"; participantCount: number };
+
 export async function ingestMatch(input: IngestMatchInput): Promise<IngestMatchResult> {
   if (!input.match?.info || !Array.isArray(input.match.info.participants) || input.match.info.participants.length === 0) throw new IngestMatchError("empty_participants");
   const rawParticipants = input.match.info.participants;
+  const activePatch = normalizeActivePatch(input.activePatch);
+  let payloadPatch: string;
+  try { payloadPatch = toPatchKey(input.match.info.gameVersion); }
+  catch { throw new OutOfScopeMatchError(rawParticipants.length); }
+  if (!activePatch || payloadPatch !== activePatch) throw new OutOfScopeMatchError(rawParticipants.length);
   const parsedBoundary = rawParticipants.map((raw) => participantSchema.safeParse(raw));
   const remake = parsedBoundary.some((result) => result.success && result.data.gameEndedInEarlySurrender === true);
-  const activePatch = normalizeActivePatch(input.activePatch);
   // Keep malformed active-patch diagnostics inside participant eligibility; do
   // not throw payload-bearing errors before a safe rejected audit is possible.
   // Reserve every valid participant ID up front so malformed rows cannot claim

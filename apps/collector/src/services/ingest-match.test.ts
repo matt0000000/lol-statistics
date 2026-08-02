@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ingestMatch, IngestMatchError, parseFinalInventory } from "./ingest-match";
+import { ingestMatch, IngestMatchError, OutOfScopeMatchError, parseFinalInventory } from "./ingest-match";
 
 describe("parseFinalInventory", () => {
   const catalog = [
@@ -28,13 +28,23 @@ describe("parseFinalInventory", () => {
     for (const arg of logger.warn.mock.calls.flat()) expect(JSON.stringify(arg)).not.toContain("secret-puuid");
   });
 
-  it("turns malformed game versions into safe rejected observations", async () => {
+  it("fails closed for malformed game versions before persistence", async () => {
     const saveValidatedMatch = vi.fn().mockResolvedValue({ observationsAccepted: 0, observationsRejected: 1, replay: false });
-    await ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: {
+    await expect(ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: {
       metadata: { dataVersion: "2", matchId: "TR1_2", participants: ["secret-puuid"] },
       info: { platformId: "TR1", queueId: 420, gameVersion: "secret-version", gameCreation: 1, gameDuration: 1800, participants: [{ participantId: 1, puuid: "secret-puuid", championId: 1, teamPosition: "BOTTOM", win: true, gameEndedInEarlySurrender: false, item0: 0, item1: 0, item2: 0, item3: 0, item4: 0, item5: 0, item6: 0 }] }
-    }, eligiblePlayers: new Map([["secret-puuid", { tier: "EMERALD", division: "I" }]]), catalog, observations: { saveValidatedMatch }});
-    expect(saveValidatedMatch.mock.calls[0]?.[3]).toEqual([{ accepted: false, participantId: 1, reason: "patch" }]);
+    }, eligiblePlayers: new Map([["secret-puuid", { tier: "EMERALD", division: "I" }]]), catalog, observations: { saveValidatedMatch }})).rejects.toMatchObject({ code: "out_of_patch" });
+    expect(saveValidatedMatch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before persistence when the payload is outside the active patch", async () => {
+    const saveValidatedMatch = vi.fn();
+    const match = {
+      metadata: { dataVersion: "2", matchId: "TR1_2_PATCH", participants: ["secret-puuid"] },
+      info: { platformId: "TR1", queueId: 420, gameVersion: "16.14.1", gameCreation: 1, gameDuration: 1800, participants: [{ participantId: 1, puuid: "secret-puuid", championId: 1, teamPosition: "BOTTOM", win: true, gameEndedInEarlySurrender: false, item0: 0, item1: 0, item2: 0, item3: 0, item4: 0, item5: 0, item6: 0 }] }
+    };
+    await expect(ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match, eligiblePlayers: new Map(), catalog, observations: { saveValidatedMatch } })).rejects.toEqual(expect.objectContaining({ code: "out_of_patch", participantCount: 1 }));
+    expect(saveValidatedMatch).not.toHaveBeenCalled();
   });
 
   it("rejects an empty runtime match before remake parsing or repository calls", async () => {

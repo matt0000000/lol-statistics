@@ -9,7 +9,10 @@ use `bun run collect -- --migrate` during a controlled release. A normal run
 resumes the durable CATALOG → LADDER → DISCOVERY → MATCHES → AGGREGATES →
 VERIFY → PUBLISH state machine. Completed stages are not repeated. Failed runs
 resume only when the active patch, 35-day coverage window, and minimum sample
-of 100 match the original run.
+of 100 match the original run. A normal scheduled invocation never selects a
+`COMPLETED` run: completed runs and their publications are immutable history.
+Each invocation creates a fresh run with a new `startedAt` and coverage window,
+while the previous publication remains active until the new run is published.
 
 Each run persists its exact `coverageStartedAt` at creation. That timestamp is
 used for Riot discovery, aggregate rebuilds, and publication verification; it
@@ -22,9 +25,10 @@ This prevents an invalid `startTime` or an infinite stale-resume loop.
 
 The CLI constructs the real Riot and Data Dragon clients and runs every stage
 through repository-backed discovery, ingestion, aggregate, verification, and
-publication services. A completed run is scheduler-idempotent only while its
-owned publication remains active; a stale completed run fails closed for
-operator inspection.
+publication services. A stale nonterminal run is failed closed for operator
+inspection before a fresh run is created. Advisory locking still prevents
+overlapping workers; it does not turn completed history into scheduler
+idempotency.
 
 Exit codes are stable for schedulers: `0` success, `2` authentication or an
 expired development key, `3` publication invariant failure, and `4` exhausted
@@ -37,11 +41,15 @@ the lock is released in a `finally` path on success, failure, and process
 errors. If a process is terminated, PostgreSQL releases its session lock and
 the next invocation can safely resume persisted checkpoints. Canonical matches
 already durably ingested as `VALID` are not fetched again. Matches recorded as
-`REJECTED` remain eligible for refetch in a later run, so a new ladder snapshot
-can re-evaluate rank/eligibility and promote the match to `VALID` without
-duplicating accepted participant observations. Within one run, the
-discovered-match checkpoint is marked processed after ingestion (including
-deterministic rejection), preventing endless retries after a crash. A crash
+`REJECTED` remain eligible for refetch in a later run when they belong to the
+active patch, so a new ladder snapshot can re-evaluate rank/eligibility and
+promote the match to `VALID` without duplicating accepted participant
+observations. Rejected participant rows in a `VALID` canonical match are
+immutable for that payload: a changed partial-valid replay fails closed and
+marks the run failed; it is not an automatic repair. All-rejected matches may
+be re-evaluated in a later run. Within one run, the discovered-match checkpoint
+is marked processed after ingestion (including deterministic rejection or an
+out-of-patch payload), preventing endless retries after a crash. A crash
 before that checkpoint or before a match row is committed may cause one
 refetch; the checkpoint boundary is at durable match ingestion.
 
@@ -51,7 +59,11 @@ snapshot, while published aggregate rows retain the rank-at-collection values
 from accepted observations.
 
 Match-level routing, queue, patch, timestamp, and duration fields remain strict
-at the Riot boundary. Participant elements are then validated independently:
+at the Riot boundary. A payload whose parsed `gameVersion` patch differs from
+the run's active patch is never persisted under the current patch ID; it is
+checkpointed as processed with bounded rejection accounting and no canonical
+match or participant writes. Participant elements are then validated
+independently:
 missing or wrongly typed PUUID, win, role, champion, early-surrender, or item
 fields produce one bounded `required_field` rejection while other participants
 continue through eligibility and item normalization. Non-object elements receive

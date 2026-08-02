@@ -143,6 +143,18 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     ]));
   });
 
+  it("checkpoints out-of-patch matches atomically and counts once", async () => {
+    const ladder = new LadderRepository(database.db);
+    await ladder.snapshotLadder(runId, [{ puuid: "private", tier: "EMERALD", rank: "I", queueType: "RANKED_SOLO_5x5" }]);
+    const matches = new MatchesRepository(database.db);
+    await matches.savePage(runId, "private", 1, ["TR1_201"]);
+    await matches.markOutOfScope(runId, "TR1_201", 10);
+    await matches.markOutOfScope(runId, "TR1_201", 10);
+    expect(await matches.pending(runId)).toEqual([]);
+    const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
+    expect(run).toMatchObject({ matchesIngested: 1, observationsRejected: 10 });
+  });
+
   it("serializes counter updates against terminal status", async () => {
     const { CollectionRunRepository } = await import("./collection-runs");
     const runs = new CollectionRunRepository(database.db);

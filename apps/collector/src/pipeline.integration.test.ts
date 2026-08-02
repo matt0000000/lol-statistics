@@ -67,13 +67,13 @@ suite("collector pipeline PostgreSQL restart durability", () => {
       await runCollection(deps);
       expect(fetched.get("TR1_1")).toBe(1); expect(fetched.get("TR1_2")).toBe(1); expect(fetched.get("TR1_3")).toBe(1);
       expect((await isolated.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true))).length).toBe(1);
-      const discovered = await isolated.db.select().from(discoveredMatches).where(eq(discoveredMatches.runId, (await runs.resumeOrCreate({ patchId: patch!.id, coverageDays: 35, minimumSample: 100 })).id));
+      const [completedRun] = await isolated.db.select().from(collectionRuns).where(eq(collectionRuns.status, "COMPLETED")).limit(1);
+      const discovered = await isolated.db.select().from(discoveredMatches).where(eq(discoveredMatches.runId, completedRun!.id));
       expect(discovered).toHaveLength(3);
       expect(await isolated.db.select().from(matches).where(eq(matches.patchId, patch!.id))).toHaveLength(3);
       const sourceRows = await isolated.db.select().from(participantObservations).where(eq(participantObservations.patchId, patch!.id));
       expect(sourceRows).toHaveLength(3);
       expect(new Set(sourceRows.map((row) => `${row.matchId}:${row.participantId}`))).toEqual(new Set(["TR1_1:1", "TR1_2:1", "TR1_3:1"]));
-      const [completedRun] = await isolated.db.select().from(collectionRuns).where(eq(collectionRuns.status, "COMPLETED")).limit(1);
       const [activePublication] = await isolated.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true));
       expect(activePublication?.minimumSample).toBe(100);
       expect(await isolated.db.select().from(baselineAggregates).where(eq(baselineAggregates.publicationId, activePublication!.id))).toEqual(expect.arrayContaining([expect.objectContaining({ championId: 1, role: "TOP", wins: 3, losses: 0, sample: 3 })]));
@@ -83,7 +83,12 @@ suite("collector pipeline PostgreSQL restart durability", () => {
         aggregates.ensurePublicationTarget({ runId: completedRun!.id, patchId: patch!.id, coverageStartedAt: new Date(now - 35 * 86_400_000), minimumSample: 100 })
       ]);
       expect(targets[0].id).toBe(targets[1].id);
-      const third = await runCollection(deps); expect(third).toBe((await isolated.db.select({ id: collectionRuns.id }).from(collectionRuns).where(eq(collectionRuns.status, "COMPLETED")).limit(1))[0]?.id);
+      const third = await runCollection(deps);
+      expect(third).not.toBe(completedRun!.id);
+      expect((await isolated.db.select().from(collectionRuns).where(eq(collectionRuns.status, "COMPLETED"))).length).toBe(2);
+      expect((await isolated.db.select().from(aggregatePublications).where(eq(aggregatePublications.isActive, true))).length).toBe(1);
+      const [thirdPublication] = await isolated.db.select().from(aggregatePublications).where(and(eq(aggregatePublications.runId, third), eq(aggregatePublications.isActive, true)));
+      expect(thirdPublication).toBeTruthy();
       // Exercise the production PostgreSQL advisory lock with two independent
       // pools. The first invocation signals only after acquiring the lock and
       // blocks on a deterministic barrier; the second must exit overlap

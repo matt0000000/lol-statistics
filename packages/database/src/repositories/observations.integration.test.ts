@@ -212,6 +212,17 @@ describe.skipIf(!url)("validated participant observations", () => {
     await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
     await expectUnchangedAfterFailure(database, runId, before);
   });
+
+  it("fails closed for a corrected partial-valid replay without repairing rejected rows", async () => {
+    const original = acceptedParticipants();
+    await repository.saveValidatedMatch(runId, patchId, matchPayload(), original);
+    const before = await canonicalSnapshot(database, runId);
+    const changed = acceptedParticipants();
+    const rejection = changed.find((part) => !part.accepted);
+    if (rejection && !rejection.accepted) rejection.reason = "duration";
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), changed)).rejects.toThrow("match replay conflict");
+    await expectUnchangedAfterFailure(database, runId, before);
+  });
 });
 
 async function canonicalSnapshot(database: Awaited<ReturnType<typeof createMigratedTestDatabase>>, runId: string) {

@@ -33,21 +33,17 @@ export class CollectionRunRepository {
     const minimumSample = input.minimumSample ?? 100;
     if (!Number.isSafeInteger(coverageDays) || coverageDays <= 0 || !Number.isSafeInteger(minimumSample) || minimumSample < 0) throw new Error("invalid collection parameters");
     const rows = await this.db.select().from(collectionRuns)
-      .where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED", "COMPLETED"]))
+      .where(inArray(collectionRuns.status, ["PENDING", "RUNNING", "FAILED"]))
       .orderBy(desc(collectionRuns.updatedAt), desc(collectionRuns.startedAt));
     const sameConfig = (row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) =>
       (row.patchId ?? null) === (input.patchId ?? null) && (row.coverageDays ?? 35) === coverageDays && (row.minimumSample ?? 100) === minimumSample
     ;
-    // Completed runs are scheduler-idempotent: an invocation for the same
-    // immutable patch/config returns the existing publication instead of
-    // forking a duplicate run.
     const now = this.options.now?.() ?? new Date();
-    const resumable = rows.filter((row: CollectionRun) => row.status !== "COMPLETED" && !isCoverageStale((row as any).coverageStartedAt, now));
-    for (const stale of rows.filter((row: CollectionRun) => row.status !== "COMPLETED" && sameConfig(row) && isCoverageStale((row as any).coverageStartedAt, now))) {
+    const resumable = rows.filter((row: CollectionRun) => !isCoverageStale((row as any).coverageStartedAt, now));
+    for (const stale of rows.filter((row: CollectionRun) => sameConfig(row) && isCoverageStale((row as any).coverageStartedAt, now))) {
       await this.markFailed(stale.id, "stale_coverage", { code: "COVERAGE_WINDOW_EXPIRED" }, String(stale.stage ?? "catalog"));
     }
-    const match = rows.find((row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) => row.status === "COMPLETED" && sameConfig(row))
-      ?? resumable.find(sameConfig);
+    const match = resumable.find(sameConfig);
     if (match) return match;
     const startedAt = now;
     const [created] = await this.db.insert(collectionRuns).values({

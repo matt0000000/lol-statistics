@@ -65,10 +65,9 @@ export class ObservationsRepository {
     if (!found[0]) throw new Error("match does not belong to collection run");
     let matchPatch: string | undefined;
     try { matchPatch = toPatchKey(match.info.gameVersion); } catch {
-      // A malformed match can still be retained as a rejected audit record, but
-      // never as a valid accepted match.
       matchPatch = undefined;
     }
+    if (matchPatch !== patch.patchKey) throw new Error("match patch mismatch");
 
     const accepted = participants.filter((part): part is Extract<ParsedParticipant, { accepted: true }> => part.accepted);
     const rejected = participants.length - accepted.length;
@@ -83,7 +82,6 @@ export class ObservationsRepository {
       validationState: accepted.length > 0 ? "VALID" as const : "REJECTED" as const,
       validationError: accepted.length > 0 ? null : "NO_ELIGIBLE_PARTICIPANTS"
     };
-    if (accepted.length > 0 && matchPatch !== patch.patchKey) throw new Error("match patch mismatch");
     await tx.insert(matches).values(values).onConflictDoNothing({ target: matches.matchId });
     const existing = (await tx.select().from(matches).where(eq(matches.matchId, match.metadata.matchId)).for("update").limit(1))[0];
     if (!existing) throw new Error("match could not be persisted");

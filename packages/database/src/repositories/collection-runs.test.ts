@@ -69,4 +69,15 @@ describe("coverage recovery", () => {
     const selected = await new CollectionRunRepository(db, { now: () => now }).resumeOrCreate({ patchId: 1 });
     expect(selected.id).toBe("fresh");
   });
+
+  it("creates fresh history after a completed run with the same configuration", async () => {
+    const fresh = { id: "fresh", status: "PENDING", stage: "catalog", patchId: 1, coverageDays: 35, minimumSample: 100, coverageStartedAt: new Date(now.getTime() - 35 * 86_400_000) };
+    const db = {
+      // The status predicate excludes terminal history before ordering.
+      select: () => ({ from: () => ({ where: () => ({ orderBy: async () => [] }) }) }),
+      insert: () => ({ values: () => ({ returning: async () => [fresh] }) })
+    };
+    const selected = await new CollectionRunRepository(db, { now: () => now }).resumeOrCreate({ patchId: 1, coverageDays: 35, minimumSample: 100 });
+    expect(selected.id).toBe("fresh");
+  });
 });

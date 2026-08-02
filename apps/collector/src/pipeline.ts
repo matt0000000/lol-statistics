@@ -50,14 +50,8 @@ export async function runCollection(dependencies: PipelineDependencies): Promise
       coverageDays: dependencies.coverageDays ?? 35,
       minimumSample: dependencies.minimumSample ?? 100
     });
-    // Scheduler retries of an already-published configuration are no-ops. Never
-    // transition a terminal run back to RUNNING (or invoke workers) on retry.
     if (run.status === "COMPLETED") {
-      const active = dependencies.runs.isActivePublication
-        ? await dependencies.runs.isActivePublication(run)
-        : Boolean(run.publicationId);
-      if (active) return run.id;
-      throw Object.assign(new Error("completed collection run has no active publication"), { invariant: true });
+      throw Object.assign(new Error("completed collection run is immutable history"), { invariant: true });
     }
     await dependencies.runs.markRunning?.(run.id);
     let activeStage: CollectionStage = currentStage(run);

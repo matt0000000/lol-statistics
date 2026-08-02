@@ -53,12 +53,12 @@ describe("resumable collection pipeline", () => {
     expect(exitCodeForError(new Error("unknown"))).toBe(1);
   });
 
-  it("returns a completed run with its active publication without rerunning stages", async () => {
+  it("fails closed if a completed run is ever returned by a scheduler repository", async () => {
     const completed = harness();
     const handlers = completed.handlers;
     (completed.dependencies.runs.resumeOrCreate as any).mockResolvedValue({ ...completed.run, status: "COMPLETED", publicationId: "pub-1" });
     (completed.dependencies.runs.isActivePublication as any) = vi.fn(async () => true);
-    await expect(runCollection(completed.dependencies)).resolves.toBe("run-1");
+    await expect(runCollection(completed.dependencies)).rejects.toMatchObject({ invariant: true });
     expect(completed.dependencies.runs.markRunning).not.toHaveBeenCalled();
     expect(handlers.CATALOG).not.toHaveBeenCalled();
   });
