@@ -38,6 +38,9 @@ describe.skipIf(!url)("catalog synchronization", () => {
     expect(await database.db.select().from(champions).where(eq(champions.patchId, patchId))).toHaveLength(first.champions);
     const storedItems = await database.db.select().from(items).where(eq(items.patchId, patchId));
     expect(storedItems).toHaveLength(first.items);
+    expect((await database.db.select().from(champions).where(eq(champions.patchId, patchId))).find((champion) => champion.championId === 266)?.iconUrl).toBe("https://ddragon.leagueoflegends.com/cdn/16.15.1/img/champion/Aatrox.png");
+    expect(storedItems.find((item) => item.itemId === 3031)?.iconUrl).toBe("https://ddragon.leagueoflegends.com/cdn/16.15.1/img/item/3031.png");
+    expect(storedItems.every((item) => /^https:\/\/ddragon\.leagueoflegends\.com\/cdn\/16\.15\.1\/img\/item\/[^/]+$/.test(item.iconUrl))).toBe(true);
     expect(storedItems.find((item) => item.itemId === 3031)).toMatchObject({
       category: "CORE",
       normalizedBaseId: 3031,

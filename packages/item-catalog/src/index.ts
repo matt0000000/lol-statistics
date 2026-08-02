@@ -4,4 +4,5 @@ export * from "./classifier";
 export * from "./normalize";
 export * from "./overrides";
 export * from "./aliases";
+export * from "./asset-url";
 export * from "./sync";

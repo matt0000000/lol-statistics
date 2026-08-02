@@ -6,6 +6,7 @@ import { classifyItem, type ItemCategory } from "./classifier";
 import { normalizeItemId, validateAliases, type ItemAliases } from "./normalize";
 import { overridesFor } from "./overrides";
 import type { ChampionDto, ItemDto } from "./contracts";
+import { dataDragonAssetUrl } from "./asset-url";
 
 export type Database = ReturnType<typeof createDatabase>;
 export type DataDragonCatalog = Awaited<ReturnType<DataDragonClient["fetchTrCatalog"]>> & {
@@ -17,6 +18,22 @@ type Transaction = any;
 
 export const PATCH_ROLLOVER_LOCK_ORDER = ["active_publications", "patches"] as const;
 
+export function canonicalizeCatalogAssets(catalog: DataDragonCatalog): DataDragonCatalog {
+  return {
+    ...catalog,
+    champions: Object.fromEntries(
+      Object.entries(catalog.champions).map(([slug, champion]) => [
+        slug,
+        { ...champion, image: { ...champion.image, full: dataDragonAssetUrl(catalog.version, "champion", champion.image.full) } }
+      ])
+    ),
+    items: catalog.items.map((item) => ({
+      ...item,
+      image: { ...item.image, full: dataDragonAssetUrl(catalog.version, "item", item.image.full) }
+    }))
+  };
+}
+
 export function patchPublicationTransition(samePatchRefresh: boolean): { activePublicationId?: string | null; publishedAt?: Date | null } {
   return samePatchRefresh ? {} : { activePublicationId: null, publishedAt: null };
 }
@@ -25,16 +42,17 @@ export async function syncCatalog(
   database: Database,
   catalog: DataDragonCatalog
 ): Promise<{ patchId: number; champions: number; items: number }> {
+  const canonicalCatalog = canonicalizeCatalogAssets(catalog);
   return database.db.transaction(async (transaction) => {
-    const patchId = await upsertPatch(transaction, catalog.version);
-    const aliases = catalog.aliases ?? {};
-    validateAliases(aliases, new Set(catalog.items.map((item) => Number(item.id))));
-    const championCount = await upsertChampions(transaction, patchId, catalog.champions);
+    const patchId = await upsertPatch(transaction, canonicalCatalog.version);
+    const aliases = canonicalCatalog.aliases ?? {};
+    validateAliases(aliases, new Set(canonicalCatalog.items.map((item) => Number(item.id))));
+    const championCount = await upsertChampions(transaction, patchId, canonicalCatalog.champions);
     const itemCount = await upsertClassifiedItems(
       transaction,
       patchId,
-      catalog.items,
-      overridesFor(catalog.version),
+      canonicalCatalog.items,
+      overridesFor(canonicalCatalog.version),
       aliases
     );
     return { patchId, champions: championCount, items: itemCount };
