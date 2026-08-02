@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { rebuildAggregates, type AggregateObservation } from "./rebuild-aggregates";
 
 describe("rebuildAggregates", () => {
+  it("excludes observations before the exact coverage boundary", async () => {
+    const boundary = new Date("2026-08-01T00:00:00.000Z");
+    const result = await rebuildAggregates({ publicationId: "00000000-0000-4000-8000-000000000001", runId: "00000000-0000-4000-8000-000000000002", patchId: 1, coverageStartedAt: boundary, source: [
+      { championId: 1, role: "TOP", matchId: "a-old", participantId: 1, win: true, items: [], gameCreation: new Date(boundary.getTime() - 1) },
+      { championId: 1, role: "TOP", matchId: "b-boundary", participantId: 1, win: false, items: [], gameCreation: boundary },
+      { championId: 1, role: "TOP", matchId: "c-new", participantId: 1, win: true, items: [], gameCreation: new Date(boundary.getTime() + 1) }
+    ] });
+    expect(result.groups.get("1:TOP")?.baseline).toEqual({ wins: 1, losses: 1, sample: 2 });
+  });
   it("builds baseline, item, pair, trio, and boots counters from observations", async () => {
     const source: AggregateObservation[] = [
       { championId: 1, role: "TOP", matchId: "m1", participantId: 1, win: true, items: [3031, 6672, 3085], boots: 3006 },

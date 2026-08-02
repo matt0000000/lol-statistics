@@ -130,15 +130,15 @@ describe.skipIf(!url)("validated participant observations", () => {
     expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(2);
   });
 
-  it("does not allow a rejected-only canonical match to become accepted", async () => {
+  it("allows a rejected canonical match to be re-evaluated and become accepted", async () => {
     const rejected: ParsedParticipant[] = [{ accepted: false, participantId: 1, reason: "rank" }];
     await repository.saveValidatedMatch(runId, patchId, matchPayload(), rejected);
     const accepted = acceptedParticipants().slice(0, 1);
-    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), accepted)).rejects.toThrow("match replay conflict");
+    await expect(repository.saveValidatedMatch(runId, patchId, matchPayload(), accepted)).resolves.toMatchObject({ replay: false, observationsAccepted: 1 });
     const [run] = await database.db.select().from(collectionRuns).where(eq(collectionRuns.id, runId));
-    expect(run?.status).toBe("FAILED");
-    expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(0);
-    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(1);
+    expect(run?.status).toBe("RUNNING");
+    expect(await database.db.select().from(participantObservations).where(eq(participantObservations.matchId, MATCH_ID))).toHaveLength(1);
+    expect(await database.db.select().from(participantRejections).where(eq(participantRejections.matchId, MATCH_ID))).toHaveLength(0);
   });
 
   it("fails safely when an accepted participant PUUID changes", async () => {

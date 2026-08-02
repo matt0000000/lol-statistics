@@ -70,7 +70,7 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
         DISCOVERY: async (run) => {
           if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
           const snapshots = await database!.db.select().from(ladderSnapshots).where(eq(ladderSnapshots.runId, run.id));
-          const start = new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000);
+          const start = new Date((run as any).coverageStartedAt ?? new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000));
           for (const player of snapshots) await discoverMatches({ runId: run.id, puuid: player.puuid, coverageStart: start, matchClient, repository: discoveryRepo });
         },
         MATCHES: async (run) => {
@@ -87,11 +87,12 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
             ? await discoveryRepo.pending(run.id)
             : await database!.db.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, run.id), eq(discoveredMatches.status, "PENDING")));
           for (const { matchId } of pending) {
-            const [existing] = await database!.db.select({ id: matchesTable.matchId }).from(matchesTable).where(eq(matchesTable.matchId, matchId)).limit(1);
-            if (existing) continue; // durable fetch checkpoint: never refetch canonical matches
+            const [existing] = await database!.db.select({ id: matchesTable.matchId, validationState: matchesTable.validationState }).from(matchesTable).where(eq(matchesTable.matchId, matchId)).limit(1);
+            if (existing?.validationState === "VALID") continue; // accepted canonical matches are immutable and idempotently skipped
             try {
               const match = await matchClient.getMatch(matchId);
               await ingestMatch({ runId: run.id, patchId: run.patchId, activePatch: patch.patchKey, match, eligiblePlayers: eligible, catalog, observations: observationsRepo, logger });
+              if (discoveryRepo.markProcessed) await discoveryRepo.markProcessed(run.id, matchId);
             } catch (error) {
               if (isUnavailableMatchError(error)) {
                 if (!discoveryRepo.markUnavailable) throw Object.assign(new Error("discovery repository cannot checkpoint unavailable matches"), { invariant: true });
@@ -105,11 +106,13 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
         AGGREGATES: async (run) => {
           if (!run.patchId) throw Object.assign(new Error("active patch was not bound"), { invariant: true });
           const aggregateRepo = new AggregatesRepository(database!.db);
-          const publication = await aggregateRepo.ensurePublicationTarget({ runId: run.id, patchId: run.patchId, coverageStartedAt: new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000), minimumSample: run.minimumSample ?? 100 });
+          const publication = await aggregateRepo.ensurePublicationTarget({ runId: run.id, patchId: run.patchId, coverageStartedAt: new Date((run as any).coverageStartedAt ?? new Date(new Date(run.startedAt as Date).getTime() - (run.coverageDays ?? 35) * 86_400_000)), minimumSample: run.minimumSample ?? 100 });
+          const target = await aggregateRepo.getPublication(publication.id);
           const publicationId = publication.id;
           const catalogRows = await database!.db.select().from(items).where(eq(items.patchId, run.patchId));
-          const source = async (cursor: unknown, pageSize: number) => aggregateRepo.observationPage(run.patchId!, cursor as any, pageSize);
-          await rebuildAggregates({ publicationId, runId: run.id, patchId: run.patchId, source, sink: aggregateRepo, catalog: new Map(catalogRows.map((row) => [row.itemId, row])) });
+          const coverageStartedAt = target.coverageStartedAt as Date;
+          const source = async (cursor: unknown, pageSize: number) => aggregateRepo.observationPage(run.patchId!, cursor as any, pageSize, undefined, coverageStartedAt);
+          await rebuildAggregates({ publicationId, runId: run.id, patchId: run.patchId, source, sink: aggregateRepo, coverageStartedAt, catalog: new Map(catalogRows.map((row) => [row.itemId, row])) });
         },
         VERIFY: async (run) => {
           if (typeof run.publicationId !== "string" || !run.patchId) throw Object.assign(new Error("publication owner is missing"), { invariant: true });

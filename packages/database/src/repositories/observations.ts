@@ -87,8 +87,13 @@ export class ObservationsRepository {
     await tx.insert(matches).values(values).onConflictDoNothing({ target: matches.matchId });
     const existing = (await tx.select().from(matches).where(eq(matches.matchId, match.metadata.matchId)).for("update").limit(1))[0];
     if (!existing) throw new Error("match could not be persisted");
-    if (existing.patchId !== patchId || existing.platformId !== values.platformId || existing.queueId !== values.queueId || existing.gameVersion !== values.gameVersion || existing.gameDuration !== values.gameDuration || existing.validationState !== values.validationState || existing.validationError !== values.validationError || new Date(existing.gameCreation).getTime() !== values.gameCreation.getTime()) {
+    const rejectedUpgrade = existing.validationState === "REJECTED" && values.validationState === "VALID";
+    if (existing.patchId !== patchId || existing.platformId !== values.platformId || existing.queueId !== values.queueId || existing.gameVersion !== values.gameVersion || existing.gameDuration !== values.gameDuration || (!rejectedUpgrade && existing.validationState !== values.validationState) || (!rejectedUpgrade && existing.validationError !== values.validationError) || new Date(existing.gameCreation).getTime() !== values.gameCreation.getTime()) {
       throw new ReplayConflict();
+    }
+    if (rejectedUpgrade) {
+      await tx.delete(participantRejections).where(and(eq(participantRejections.matchId, match.metadata.matchId), eq(participantRejections.patchId, patchId)));
+      await tx.update(matches).set({ validationState: "VALID", validationError: null }).where(eq(matches.matchId, match.metadata.matchId));
     }
     if (await this.hasCanonicalRows(tx, match.metadata.matchId)) {
       if (await this.sameCanonical(tx, match.metadata.matchId, patchId, participants)) {

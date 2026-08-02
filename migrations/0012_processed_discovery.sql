@@ -1,0 +1,1 @@
+ALTER TYPE "public"."discovered_match_status" ADD VALUE 'PROCESSED' BEFORE 'UNAVAILABLE';

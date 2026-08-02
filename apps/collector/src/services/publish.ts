@@ -1,6 +1,6 @@
 import { rebuildAggregates, type AggregateObservation } from "./rebuild-aggregates";
 import { assertDatabase, aggregatePublications, baselineAggregates, bootsAggregates, collectionRuns, combinationAggregates, itemAggregates, items, matches, participantBoots, participantCoreItems, participantObservations, patches, type Database } from "@lol/database";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 
 export type InvariantFailure = { code: string; count: number };
 export type VerificationReport = { valid: boolean; failures: InvariantFailure[] };
@@ -193,12 +193,12 @@ export async function lockAndLoadCanonical(tx: any, publicationId: string, runId
   const itemCatalog = new Map<number, any>(catalogRows.map((row: any) => [row.itemId, row]));
   const observations: AggregateObservation[] = [];
   if (patchId) {
-    const joined = await tx.select().from(participantObservations).innerJoin(matches, eq(matches.matchId, participantObservations.matchId)).where(eq(participantObservations.patchId, patchId)).orderBy(asc(participantObservations.championId), asc(participantObservations.role), asc(participantObservations.matchId), asc(participantObservations.participantId)).for("update");
+    const joined = await tx.select().from(participantObservations).innerJoin(matches, eq(matches.matchId, participantObservations.matchId)).where(and(eq(participantObservations.patchId, patchId), gte(matches.gameCreation, publication.coverageStartedAt), eq(matches.patchId, patchId), eq(matches.validationState, "VALID"), eq(matches.platformId, "TR1"), eq(matches.queueId, 420))).orderBy(asc(participantObservations.championId), asc(participantObservations.role), asc(participantObservations.matchId), asc(participantObservations.participantId)).for("update");
     for (const entry of joined) {
       const observation = entry.participant_observations;
       const core = await tx.select({ itemId: participantCoreItems.itemId, quantity: participantCoreItems.quantity, category: items.category, normalizedBaseId: items.normalizedBaseId }).from(participantCoreItems).innerJoin(items, and(eq(items.patchId, participantCoreItems.patchId), eq(items.itemId, participantCoreItems.itemId))).where(and(eq(participantCoreItems.matchId, observation.matchId), eq(participantCoreItems.participantId, observation.participantId), eq(participantCoreItems.patchId, patchId))).for("update");
       const bootsRow = (await tx.select({ itemId: participantBoots.itemId, category: items.category, normalizedBaseId: items.normalizedBaseId }).from(participantBoots).innerJoin(items, and(eq(items.patchId, participantBoots.patchId), eq(items.itemId, participantBoots.itemId))).where(and(eq(participantBoots.matchId, observation.matchId), eq(participantBoots.participantId, observation.participantId))).limit(1).for("update"))[0];
-      observations.push({ championId: observation.championId, role: observation.role, matchId: observation.matchId, participantId: observation.participantId, win: observation.win, items: core, boots: bootsRow, patchId, queueId: entry.matches.queueId, platformId: entry.matches.platformId, validationState: entry.matches.validationState });
+      observations.push({ championId: observation.championId, role: observation.role, matchId: observation.matchId, participantId: observation.participantId, win: observation.win, items: core, boots: bootsRow, patchId, queueId: entry.matches.queueId, platformId: entry.matches.platformId, validationState: entry.matches.validationState, gameCreation: entry.matches.gameCreation });
     }
   }
   return { publicationId, runId, patchId: publication?.patchId, publication, run, patch, baseline, items: itemRows, combinations, boots, observations, itemCatalog };

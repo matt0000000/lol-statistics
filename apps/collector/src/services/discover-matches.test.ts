@@ -32,6 +32,13 @@ describe("discoverMatches", () => {
     expect(await repository.pending!("run-1")).toEqual([{ matchId: "TR1_200" }]);
   });
 
+  it("marks deterministic rejection processed within a run", async () => {
+    const repository = memoryDiscoveryRepository();
+    await discoverMatches({ runId: "run-1", puuid: "private", coverageStart: new Date("2026-07-01T00:00:00Z"), matchClient: { listMatchIds: vi.fn().mockResolvedValue(["TR1_200"]) }, repository });
+    await repository.markProcessed!("run-1", "TR1_200");
+    expect(await repository.pending!("run-1")).toEqual([]);
+  });
+
   it("redacts dependency failures", async () => {
     const repository = memoryDiscoveryRepository();
     const matchClient = { listMatchIds: vi.fn().mockRejectedValue(new Error("private-puuid leaked")) };

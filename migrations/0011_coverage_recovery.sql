@@ -1,0 +1,1 @@
+ALTER TABLE "collection_runs" ADD COLUMN "coverage_started_at" timestamp with time zone DEFAULT now() NOT NULL;

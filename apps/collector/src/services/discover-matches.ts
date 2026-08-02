@@ -88,6 +88,10 @@ export function memoryDiscoveryRepository(): MemoryDiscoveryRepository {
       if (!(matches.get(runId)?.has(matchId))) throw new Error("discovered match not found");
       unavailable.add(`${runId}\u0000${matchId}`);
     },
+    async markProcessed(runId, matchId) {
+      if (!/^TR1_[0-9]+$/.test(matchId) || !(matches.get(runId)?.has(matchId))) throw new Error("discovered match not found");
+      unavailable.add(`${runId}\u0000${matchId}`);
+    },
     async pending(runId) {
       return [...(matches.get(runId) ?? [])].filter((matchId) => !unavailable.has(`${runId}\u0000${matchId}`)).map((matchId) => ({ matchId }));
     },

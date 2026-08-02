@@ -10,6 +10,12 @@ export type CollectionRunDatabase = {
   update: (table: typeof collectionRuns) => any;
 };
 
+export const RIOT_DISCOVERY_MAX_AGE_DAYS = 35;
+export const RIOT_DISCOVERY_MAX_AGE_MS = RIOT_DISCOVERY_MAX_AGE_DAYS * 86_400_000;
+export function isCoverageStale(coverageStartedAt: Date | null | undefined, now = new Date()): boolean {
+  return coverageStartedAt instanceof Date && coverageStartedAt.getTime() < now.getTime() - RIOT_DISCOVERY_MAX_AGE_MS;
+}
+
 const STAGE_ORDER = ["discovery", "snapshot", "ingest", "aggregate", "publish"] as const;
 export const COLLECTION_STAGES = ["CATALOG", "LADDER", "DISCOVERY", "MATCHES", "AGGREGATES", "VERIFY", "PUBLISH"] as const;
 type CollectionStage = (typeof COLLECTION_STAGES)[number];
@@ -19,7 +25,7 @@ export type CollectionErrorDetails = { code: string; stage?: (typeof STAGE_ORDER
 
 /** Persistence boundary for resumable collection runs. */
 export class CollectionRunRepository {
-  constructor(private readonly db: any) {}
+  constructor(private readonly db: any, private readonly options: { now?: () => Date } = {}) {}
 
   /** Find a pending/running or failed run only when its immutable collection parameters match. */
   async resumeOrCreate(input: { patchId?: number; coverageDays?: number; minimumSample?: number } = {}): Promise<CollectionRun> {
@@ -35,15 +41,23 @@ export class CollectionRunRepository {
     // Completed runs are scheduler-idempotent: an invocation for the same
     // immutable patch/config returns the existing publication instead of
     // forking a duplicate run.
+    const now = this.options.now?.() ?? new Date();
+    const resumable = rows.filter((row: CollectionRun) => row.status !== "COMPLETED" && !isCoverageStale((row as any).coverageStartedAt, now));
+    for (const stale of rows.filter((row: CollectionRun) => row.status !== "COMPLETED" && sameConfig(row) && isCoverageStale((row as any).coverageStartedAt, now))) {
+      await this.markFailed(stale.id, "stale_coverage", { code: "COVERAGE_WINDOW_EXPIRED" }, String(stale.stage ?? "catalog"));
+    }
     const match = rows.find((row: CollectionRun & { patchId?: number | null; coverageDays?: number; minimumSample?: number }) => row.status === "COMPLETED" && sameConfig(row))
-      ?? rows.find(sameConfig);
+      ?? resumable.find(sameConfig);
     if (match) return match;
+    const startedAt = now;
     const [created] = await this.db.insert(collectionRuns).values({
       status: "PENDING",
       stage: "catalog",
       patchId: input.patchId,
       coverageDays,
-      minimumSample
+      minimumSample,
+      startedAt,
+      coverageStartedAt: new Date(startedAt.getTime() - coverageDays * 86_400_000)
     }).returning();
     if (!created) throw new Error("collection run could not be created");
     return created;

@@ -18,6 +18,7 @@ export type AggregateObservation = {
   queueId?: number;
   platformId?: string;
   validationState?: string;
+  gameCreation?: Date;
 };
 
 export type AggregateGroup = {
@@ -51,6 +52,7 @@ export type RebuildInput = {
   catalog?: ReadonlyMap<number, { itemId?: number; category?: string; normalizedBaseId?: number }>;
   /** Collect all groups only for pure in-memory verification; production sinks stream groups. */
   collectResult?: boolean;
+  coverageStartedAt?: Date;
 };
 
 export type RebuildResult = {
@@ -159,6 +161,7 @@ export async function rebuildAggregates(input: RebuildInput): Promise<RebuildRes
   let previous: AggregateObservation | undefined;
   if (input.sink) await input.sink.preparePublication({ publicationId: input.publicationId, runId: input.runId, patchId: input.patchId });
   for await (const row of rowsFrom(input.source, pageSize)) {
+    if (input.coverageStartedAt && row.gameCreation && row.gameCreation.getTime() < input.coverageStartedAt.getTime()) continue;
     if (previous && compareObservation(row, previous) < 0) throw new Error("aggregate source order regression");
     previous = row;
     const key = keyOf(row);

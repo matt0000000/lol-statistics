@@ -23,7 +23,7 @@ import {
 
 export const runStatus = pgEnum("run_status", ["PENDING", "RUNNING", "COMPLETED", "FAILED"]);
 export const validationState = pgEnum("validation_state", ["PENDING", "VALID", "INVALID", "REJECTED"]);
-export const discoveredMatchStatus = pgEnum("discovered_match_status", ["PENDING", "UNAVAILABLE"]);
+export const discoveredMatchStatus = pgEnum("discovered_match_status", ["PENDING", "PROCESSED", "UNAVAILABLE"]);
 export const rejectionReason = pgEnum("rejection_reason", ["platform", "queue", "patch", "rank", "role", "remake", "duration", "required_field", "unknown_item", "invalid_item"]);
 export const role = pgEnum("role", ROLES);
 export const tier = pgEnum("tier", ["EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]);
@@ -101,6 +101,7 @@ export const collectionRuns = pgTable(
     coverageDays: integer("coverage_days").notNull().default(35),
     minimumSample: integer("minimum_sample").notNull().default(100),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    coverageStartedAt: timestamp("coverage_started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
     matchesDiscovered: integer("matches_discovered").notNull().default(0),
     matchesIngested: integer("matches_ingested").notNull().default(0),

@@ -9,6 +9,7 @@ export type DiscoveryRepository = {
   savePage(runId: string, puuid: string, nextOffset: number, matchIds: readonly string[]): Promise<number>;
   markUnavailable?: (runId: string, matchId: string) => Promise<void>;
   pending?: (runId: string) => Promise<{ matchId: string }[]>;
+  markProcessed?: (runId: string, matchId: string) => Promise<void>;
 };
 
 export class MatchesRepository implements DiscoveryRepository {
@@ -68,6 +69,12 @@ export class MatchesRepository implements DiscoveryRepository {
   async pending(runId: string): Promise<{ matchId: string }[]> {
     validateRunId(runId);
     return this.db.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.status, "PENDING")));
+  }
+
+  async markProcessed(runId: string, matchId: string): Promise<void> {
+    validateRunId(runId);
+    if (!MATCH_ID.test(matchId)) throw new Error("invalid match identifier");
+    await this.db.update(discoveredMatches).set({ status: "PROCESSED" }).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, matchId), eq(discoveredMatches.status, "PENDING")));
   }
 
   async uniqueMatchCount(runId: string): Promise<number> {
