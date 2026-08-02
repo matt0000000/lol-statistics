@@ -7,7 +7,12 @@ import { readWebConfig } from "./web-config";
 import { createRouteHandlers } from "./api-routes";
 
 const CACHE_KEY = Symbol.for("lol.web.route-factory");
-type CacheEntry = { handlers: ReturnType<typeof createRouteHandlers>; close: () => Promise<unknown>; closed: boolean };
+type CacheEntry = {
+  handlers: ReturnType<typeof createRouteHandlers>;
+  close: () => Promise<unknown>;
+  closed: boolean;
+  closePromise?: Promise<unknown>;
+};
 type GlobalWithCache = typeof globalThis & { [CACHE_KEY]?: CacheEntry };
 
 /** Lazily constructs one read-only pool for the Next process. */
@@ -26,10 +31,23 @@ export function productionRouteHandlers(): ReturnType<typeof createRouteHandlers
 export async function disposeProductionRouteHandlers(): Promise<void> {
   const global = globalThis as GlobalWithCache;
   const entry = global[CACHE_KEY];
-  if (!entry || entry.closed) return;
+  if (!entry) return;
+  // A second disposer must await the exact same close operation. This also
+  // keeps a rejected close from being retried concurrently.
+  if (entry.closePromise) {
+    await entry.closePromise;
+    return;
+  }
+
   entry.closed = true;
-  await entry.close();
-  delete global[CACHE_KEY];
+  entry.closePromise = Promise.resolve()
+    .then(() => entry.close())
+    .finally(() => {
+      // A new entry may have been installed while the old pool was closing;
+      // never remove that replacement.
+      if (global[CACHE_KEY] === entry) delete global[CACHE_KEY];
+    });
+  await entry.closePromise;
 }
 
 // Short alias for callers that do not need to distinguish production wiring

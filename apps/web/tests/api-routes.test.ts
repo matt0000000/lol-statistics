@@ -47,6 +47,14 @@ describe("public API route matrix", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("returns the common security headers for method-not-allowed responses", async () => {
+    const response = await routes().meta(new Request("http://localhost/api/meta", { method: "POST" }));
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
   it("rejects an invalid role and view", async () => {
     const handlers = routes();
     const response = await handlers.stats(new Request("http://localhost/api/champions/222/roles/ADC/stats?view=timeline"), { params: { championId: "222", role: "ADC" } });
