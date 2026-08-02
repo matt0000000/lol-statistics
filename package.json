@@ -7,6 +7,9 @@
     "dev": "bun --filter @lol/web dev",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "seed:e2e": "NODE_ENV=test bun apps/web/tests/seed-e2e.ts",
+    "build": "bun --filter @lol/web build",
     "typecheck": "bun --filter '*' typecheck",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun --filter @lol/database migrate",
@@ -14,6 +17,7 @@
     "collector:health": "bun --silent apps/collector/src/cli.ts health"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
     "@vitejs/plugin-react": "^6.0.5",
     "drizzle-kit": "^0.31.10",

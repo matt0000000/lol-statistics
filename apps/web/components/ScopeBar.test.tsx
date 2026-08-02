@@ -12,6 +12,7 @@ const meta: PublicMeta = {
 describe("ScopeBar", () => {
   it("shows published and collection dates for ready data", () => {
     render(<ScopeBar meta={meta} />);
+    expect(screen.getByText("TR1 · Ranked Solo · Emerald+")).toBeVisible();
     expect(screen.getByText("Published 2 Aug 2026")).toBeVisible();
     expect(screen.getByText("Data through 3 Aug 2026")).toBeVisible();
     expect(screen.getByText("Patch 16.16.1")).toBeVisible();
