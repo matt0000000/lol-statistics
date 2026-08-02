@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { collectionRuns, discoveredMatches, ladderSnapshots } from "../schema";
 import { assertEligibleRun, validateOffset, validatePuuid, validateRunId } from "./ladder";
 
@@ -74,7 +74,21 @@ export class MatchesRepository implements DiscoveryRepository {
   async markProcessed(runId: string, matchId: string): Promise<void> {
     validateRunId(runId);
     if (!MATCH_ID.test(matchId)) throw new Error("invalid match identifier");
-    await this.db.update(discoveredMatches).set({ status: "PROCESSED" }).where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, matchId), eq(discoveredMatches.status, "PENDING")));
+    await this.db.transaction(async (tx: any) => {
+      await assertEligibleRun(tx, runId, true);
+      const updated = await tx.update(discoveredMatches)
+        .set({ status: "PROCESSED", unavailableReason: null })
+        .where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, matchId), inArray(discoveredMatches.status, ["PENDING", "PROCESSED"])))
+        .returning({ matchId: discoveredMatches.matchId });
+      if (updated.length === 1) return;
+      const existing = await tx.select({ matchId: discoveredMatches.matchId, status: discoveredMatches.status })
+        .from(discoveredMatches)
+        .where(and(eq(discoveredMatches.runId, runId), eq(discoveredMatches.matchId, matchId)))
+        .limit(1);
+      if (!existing[0]) throw new Error("discovered match not found");
+      // UNAVAILABLE is terminal and intentionally retains its redacted reason.
+      if (existing[0].status !== "UNAVAILABLE") throw new Error("discovered match has invalid status");
+    });
   }
 
   async uniqueMatchCount(runId: string): Promise<number> {

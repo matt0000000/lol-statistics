@@ -4,6 +4,7 @@ import { createMigratedTestDatabase } from "../test-utils";
 import { collectionRuns, discoveredMatches, ladderSnapshots } from "../schema";
 import { LadderRepository } from "./ladder";
 import { MatchesRepository } from "./matches";
+import { CollectionRunRepository } from "./collection-runs";
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -15,6 +16,13 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     database = await createMigratedTestDatabase(url!);
     const [run] = await database.db.insert(collectionRuns).values({}).returning({ id: collectionRuns.id });
     runId = run!.id;
+  });
+
+  it("persists the repository's exact coverage start for a configured run", async () => {
+    const now = new Date("2026-08-02T00:00:00.000Z");
+    const run = await new CollectionRunRepository(database.db, { now: () => now }).resumeOrCreate({ coverageDays: 7, minimumSample: 0 });
+    expect(run.startedAt).toEqual(now);
+    expect(run.coverageStartedAt).toEqual(new Date(now.getTime() - 7 * 86_400_000));
   });
 
   afterEach(async () => {
@@ -116,6 +124,23 @@ describe.skipIf(!url)("ladder and match discovery checkpoints", () => {
     expect(unavailable).toMatchObject({ status: "UNAVAILABLE", unavailableReason: "not_found" });
     await matches.markUnavailable(runId, "TR1_404");
     expect(await matches.pending(runId)).toEqual([{ matchId: "TR1_200" }]);
+  });
+
+  it("marks processed matches idempotently while preserving unavailable rows", async () => {
+    const ladder = new LadderRepository(database.db);
+    await ladder.snapshotLadder(runId, [{ puuid: "private", tier: "EMERALD", rank: "I", queueType: "RANKED_SOLO_5x5" }]);
+    const matches = new MatchesRepository(database.db);
+    await matches.savePage(runId, "private", 2, ["TR1_200", "TR1_404"]);
+    await matches.markProcessed(runId, "TR1_200");
+    await matches.markProcessed(runId, "TR1_200");
+    await matches.markUnavailable(runId, "TR1_404");
+    await matches.markProcessed(runId, "TR1_404");
+    expect(await matches.pending(runId)).toEqual([]);
+    const rows = await database.db.select().from(discoveredMatches).where(eq(discoveredMatches.runId, runId));
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ matchId: "TR1_200", status: "PROCESSED", unavailableReason: null }),
+      expect.objectContaining({ matchId: "TR1_404", status: "UNAVAILABLE", unavailableReason: "not_found" })
+    ]));
   });
 
   it("serializes counter updates against terminal status", async () => {

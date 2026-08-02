@@ -452,7 +452,7 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
-          "default": "now()"
+          "default": "(now() - interval '35 days')"
         },
         "finished_at": {
           "name": "finished_at",
@@ -748,7 +748,7 @@
         },
         "discovered_matches_unavailable_reason_state": {
           "name": "discovered_matches_unavailable_reason_state",
-          "value": "(\"discovered_matches\".\"status\" = 'UNAVAILABLE' AND \"discovered_matches\".\"unavailable_reason\" IS NOT NULL) OR (\"discovered_matches\".\"status\" = 'PENDING' AND \"discovered_matches\".\"unavailable_reason\" IS NULL)"
+          "value": "(\"discovered_matches\".\"status\" = 'UNAVAILABLE' AND \"discovered_matches\".\"unavailable_reason\" IS NOT NULL) OR (\"discovered_matches\".\"status\" IN ('PENDING', 'PROCESSED') AND \"discovered_matches\".\"unavailable_reason\" IS NULL)"
         }
       },
       "isRLSEnabled": false

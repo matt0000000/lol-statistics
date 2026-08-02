@@ -88,7 +88,10 @@ export async function collectCommand(options: CollectOptions = {}): Promise<numb
             : await database!.db.select({ matchId: discoveredMatches.matchId }).from(discoveredMatches).where(and(eq(discoveredMatches.runId, run.id), eq(discoveredMatches.status, "PENDING")));
           for (const { matchId } of pending) {
             const [existing] = await database!.db.select({ id: matchesTable.matchId, validationState: matchesTable.validationState }).from(matchesTable).where(eq(matchesTable.matchId, matchId)).limit(1);
-            if (existing?.validationState === "VALID") continue; // accepted canonical matches are immutable and idempotently skipped
+            if (existing?.validationState === "VALID") {
+              if (discoveryRepo.markProcessed) await discoveryRepo.markProcessed(run.id, matchId);
+              continue; // accepted canonical matches are immutable and idempotently skipped
+            }
             try {
               const match = await matchClient.getMatch(matchId);
               await ingestMatch({ runId: run.id, patchId: run.patchId, activePatch: patch.patchKey, match, eligiblePlayers: eligible, catalog, observations: observationsRepo, logger });

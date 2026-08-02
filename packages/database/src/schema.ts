@@ -101,7 +101,7 @@ export const collectionRuns = pgTable(
     coverageDays: integer("coverage_days").notNull().default(35),
     minimumSample: integer("minimum_sample").notNull().default(100),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-    coverageStartedAt: timestamp("coverage_started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    coverageStartedAt: timestamp("coverage_started_at", { withTimezone: true, mode: "date" }).notNull().default(sql`(now() - interval '35 days')`),
     finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
     matchesDiscovered: integer("matches_discovered").notNull().default(0),
     matchesIngested: integer("matches_ingested").notNull().default(0),
@@ -148,7 +148,7 @@ export const discoveredMatches = pgTable(
     unavailableReason: text("unavailable_reason"),
     discoveredAt: timestamp("discovered_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.runId, table.matchId] }), index("discovered_matches_run_idx").on(table.runId), check("discovered_matches_unavailable_reason_safe", sql`${table.unavailableReason} IS NULL OR ${table.unavailableReason} = 'not_found'`), check("discovered_matches_unavailable_reason_state", sql`(${table.status} = 'UNAVAILABLE' AND ${table.unavailableReason} IS NOT NULL) OR (${table.status} = 'PENDING' AND ${table.unavailableReason} IS NULL)`)]
+  (table) => [primaryKey({ columns: [table.runId, table.matchId] }), index("discovered_matches_run_idx").on(table.runId), check("discovered_matches_unavailable_reason_safe", sql`${table.unavailableReason} IS NULL OR ${table.unavailableReason} = 'not_found'`), check("discovered_matches_unavailable_reason_state", sql`(${table.status} = 'UNAVAILABLE' AND ${table.unavailableReason} IS NOT NULL) OR (${table.status} IN ('PENDING', 'PROCESSED') AND ${table.unavailableReason} IS NULL)`)]
 );
 
 export const matches = pgTable(

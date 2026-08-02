@@ -6,7 +6,9 @@ const migrationFiles = readdirSync(new URL("../../../migrations", import.meta.ur
 const migration = migrationFiles
   .map((file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), "utf8"))
   .join("\n");
-const migrationMetadata = readFileSync(new URL("../../../migrations/meta/0008_snapshot.json", import.meta.url), "utf8");
+const migrationMetadata = readFileSync(new URL("../../../migrations/meta/0012_snapshot.json", import.meta.url), "utf8");
+const coverageMigration = readFileSync(new URL("../../../migrations/0011_coverage_recovery.sql", import.meta.url), "utf8");
+const processedMigration = readFileSync(new URL("../../../migrations/0012_processed_discovery.sql", import.meta.url), "utf8");
 
 describe("canonical schema integrity contract", () => {
   it("consumes domain patch and role contracts", () => {
@@ -78,5 +80,23 @@ describe("canonical schema integrity contract", () => {
   it("keeps public status active publication tied to the current patch", () => {
     const statusView = readFileSync(new URL("../../../migrations/0010_public_status.sql", import.meta.url), "utf8");
     expect(statusView).toMatch(/active_publication_id\s*=\s*ap\.id\s+AND\s+ap\.patch_id\s*=\s*p\.id/i);
+  });
+
+  it("models processed discovery rows with an exact reason-state constraint", () => {
+    expect(source).toContain('pgEnum("discovered_match_status", ["PENDING", "PROCESSED", "UNAVAILABLE"])');
+    expect(source).toContain("discovered_matches_unavailable_reason_state");
+    expect(processedMigration).toMatch(/ADD VALUE 'PROCESSED'/);
+    expect(processedMigration).toContain('DROP CONSTRAINT IF EXISTS "discovered_matches_unavailable_reason_state"');
+    expect(processedMigration).toMatch(/status[\s\S]*UNAVAILABLE[\s\S]*unavailable_reason[\s\S]*IS NOT NULL/);
+    expect(processedMigration).toMatch(/status"?\s*IN \('PENDING', 'PROCESSED'\)[\s\S]*unavailable_reason[\s\S]*IS NULL/);
+    expect(migrationMetadata).toContain("discovered_matches_unavailable_reason_state");
+  });
+
+  it("upgrades coverage windows from started_at without migration-time backfill", () => {
+    expect(coverageMigration).toMatch(/ADD COLUMN "coverage_started_at" timestamp with time zone;/);
+    expect(coverageMigration).toMatch(/started_at[\s\S]*coverage_days[\s\S]*interval '1 day'/i);
+    expect(coverageMigration).toContain("ALTER COLUMN \"coverage_started_at\" SET DEFAULT");
+    expect(coverageMigration).toContain("ALTER COLUMN \"coverage_started_at\" SET NOT NULL");
+    expect(coverageMigration).not.toMatch(/ADD COLUMN[^;]*DEFAULT now\(\)/i);
   });
 });
