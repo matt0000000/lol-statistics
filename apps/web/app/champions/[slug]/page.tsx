@@ -1,12 +1,11 @@
 import { notFound, permanentRedirect } from "next/navigation";
 import type { PublicChampion, PublicMeta, PublicQueries, PublicQueryError, Role } from "@lol/public-api";
-import { normalizeChampionSlug } from "@lol/public-api";
+import { isRole, normalizeChampionSlug } from "@lol/public-api";
 import { RoleSelector, roleLabel } from "../../../components/RoleSelector";
 import { ScopeBar } from "../../../components/ScopeBar";
 import { productionPublicQueries } from "../../../lib/route-factory";
 
 export type SearchParams = Record<string, string | string[] | undefined>;
-const ROLES = new Set<Role>(["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]);
 export const dynamic = "force-dynamic";
 
 export type ChampionPageResolution =
@@ -19,9 +18,9 @@ export type ChampionPageResolution =
 function roleState(champion: PublicChampion, searchParams: SearchParams): Pick<ChampionPageResolution & { kind: "ready" }, "selectedRole" | "unavailableRole"> {
   const rawRole = searchParams.role;
   const roleValue = Array.isArray(rawRole) ? null : rawRole;
-  const selectedRole: Role | null = roleValue && ROLES.has(roleValue as Role) && champion.roles.includes(roleValue as Role) ? roleValue as Role : null;
-  const unavailableRole = rawRole !== undefined && (Array.isArray(rawRole) || !ROLES.has(roleValue as Role) || !champion.roles.includes(roleValue as Role))
-    ? (Array.isArray(rawRole) ? "That role selection" : roleValue || "That role selection")
+  const selectedRole: Role | null = roleValue && isRole(roleValue) && champion.roles.includes(roleValue) ? roleValue : null;
+  const unavailableRole = rawRole !== undefined && (Array.isArray(rawRole) || !isRole(roleValue) || !champion.roles.includes(roleValue))
+    ? (typeof roleValue === "string" && isRole(roleValue) ? roleValue : "That role selection")
     : null;
   return { selectedRole, unavailableRole };
 }
@@ -31,7 +30,7 @@ function canonicalLocation(champion: PublicChampion, requestedSlug: string, sear
   const params = new URLSearchParams();
   const rawRole = searchParams.role;
   // Duplicate/array query values are invalid and must never be copied into a redirect.
-  if (typeof rawRole === "string" && ROLES.has(rawRole as Role)) params.set("role", rawRole);
+  if (typeof rawRole === "string" && isRole(rawRole)) params.set("role", rawRole);
   const query = params.toString();
   return `/champions/${encodeURIComponent(champion.slug)}${query ? `?${query}` : ""}`;
 }

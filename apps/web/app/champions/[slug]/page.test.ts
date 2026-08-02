@@ -32,7 +32,10 @@ describe("champion page resolver", () => {
     [{}, null, null],
     [{ role: "BOTTOM" }, "BOTTOM", null],
     [{ role: "TOP" }, null, "TOP"],
-    [{ role: ["BOTTOM"] }, null, "That role selection"]
+    [{ role: ["BOTTOM"] }, null, "That role selection"],
+    [{ role: "__proto__" }, null, "That role selection"],
+    [{ role: "constructor" }, null, "That role selection"],
+    [{ role: "toString" }, null, "That role selection"]
   ])("does not default or trust invalid role values (%j)", async (searchParams, selectedRole, unavailableRole) => {
     const result = await resolveChampionPage({ slug: "jinx", searchParams, queries: queries() });
     expect(result).toMatchObject({ kind: "ready", selectedRole, unavailableRole });

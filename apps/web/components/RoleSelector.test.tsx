@@ -22,4 +22,12 @@ describe("RoleSelector", () => {
     expect(screen.getByText(/Top is not available/i)).toBeVisible();
     expect(screen.getByRole("link", { name: "Bottom" })).toBeVisible();
   });
+
+  it.each(["__proto__", "constructor", "toString"])("renders unsafe unavailable role %s as a plain message", (unavailableRole) => {
+    render(<RoleSelector championSlug="jinx" roles={["BOTTOM", "UTILITY"]} selectedRole={null} unavailableRole={unavailableRole} />);
+    expect(screen.getByText(/That role selection is not available for this champion/i)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Bottom" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Support" })).toBeVisible();
+    expect(screen.queryByText(/function|object/i)).not.toBeInTheDocument();
+  });
 });

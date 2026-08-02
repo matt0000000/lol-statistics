@@ -6,6 +6,9 @@ const isoDate = z.string().datetime({ offset: true });
 
 export const roleSchema = z.enum(["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]);
 export type Role = z.infer<typeof roleSchema>;
+export function isRole(value: unknown): value is Role {
+  return roleSchema.safeParse(value).success;
+}
 export const statsViewSchema = z.enum(["items", "pairs", "trios", "boots"]);
 export type StatsView = z.infer<typeof statsViewSchema>;
 export const statsSortSchema = z.enum(["adjusted", "winRate", "buildRate", "sample"]);
