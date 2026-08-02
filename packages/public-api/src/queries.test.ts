@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SQL } from "drizzle-orm";
-import { wilson95 } from "@lol/domain";
 import { createPublicQueries } from "./queries";
-import { publicStatsResponseSchema, type PublicStatRow, type StatsSort } from "./contracts";
-import { sortStats } from "./sort";
+import { publicStatsResponseSchema, type StatsSort } from "./contracts";
 
 const metadata = {
   patch_version: "16.16.1",
@@ -33,6 +31,8 @@ const statsRow = {
   baseline_sample: 100,
   stat_key: "3031",
   item_ids: [3031],
+  champion_id: 222,
+  role: "BOTTOM",
   wins: 60,
   losses: 40,
   sample: 100
@@ -61,11 +61,26 @@ function cCollationCompare(left: string, right: string): number {
 
 type SourceRow = typeof statsRow;
 
-function emulateSqlOrder(rows: readonly SourceRow[], sort: StatsSort, includeLowConfidence: boolean): SourceRow[] {
-  const filtered = includeLowConfidence ? [...rows] : rows.filter((row) => row.sample >= 100);
-  const score = (row: SourceRow): number | null => row.sample >= 100 ? wilson95(row.wins, row.sample).lower : null;
+// Independent reference: this intentionally repeats the published formula and
+// comparator literals rather than importing any production implementation.
+const REFERENCE_WILSON_Z = 1.959963984540054;
+const REFERENCE_MINIMUM_SAMPLE = 100;
+
+function referenceWilsonLower(wins: number, sample: number): number {
+  if (sample === 0) return 0;
+  const p = wins / sample;
+  const zSquared = REFERENCE_WILSON_Z * REFERENCE_WILSON_Z;
+  const denominator = 1 + zSquared / sample;
+  const center = (p + zSquared / (2 * sample)) / denominator;
+  const margin = REFERENCE_WILSON_Z * Math.sqrt((p * (1 - p) + zSquared / (4 * sample)) / sample) / denominator;
+  return center - margin;
+}
+
+function referenceKeys(rows: readonly SourceRow[], sort: StatsSort, includeLowConfidence: boolean): string[] {
+  const filtered = rows.filter((row) => row.champion_id === 222 && row.role === "BOTTOM" && (includeLowConfidence || row.sample >= REFERENCE_MINIMUM_SAMPLE));
+  const score = (row: SourceRow): number | null => row.sample >= REFERENCE_MINIMUM_SAMPLE ? referenceWilsonLower(row.wins, row.sample) : null;
   const metric = (row: SourceRow): number => sort === "winRate" ? row.wins / row.sample : sort === "buildRate" ? row.sample / row.baseline_sample : row.sample;
-  return filtered.sort((left, right) => {
+  return [...filtered].sort((left, right) => {
     if (sort === "adjusted") {
       const leftScore = score(left);
       const rightScore = score(right);
@@ -79,25 +94,26 @@ function emulateSqlOrder(rows: readonly SourceRow[], sort: StatsSort, includeLow
     }
     if (left.sample !== right.sample) return right.sample - left.sample;
     return cCollationCompare(left.stat_key, right.stat_key);
-  }).slice(0, 100);
+  }).slice(0, 100).map((row) => row.stat_key);
 }
 
-function publicRow(row: SourceRow): PublicStatRow {
-  const interval = wilson95(row.wins, row.sample);
-  return {
-    key: row.stat_key,
-    itemIds: row.item_ids,
-    wins: row.wins,
-    losses: row.losses,
-    sample: row.sample,
-    rawWinRate: row.wins / row.sample,
-    buildRate: row.sample / row.baseline_sample,
-    baselineDelta: Number((row.wins / row.sample - row.baseline_wins / row.baseline_sample).toFixed(12)),
-    confidenceLower: interval.lower,
-    confidenceUpper: interval.upper,
-    adjustedScore: row.sample >= 100 ? interval.lower : null,
-    confidence: row.sample >= 100 ? "recommended" : "low"
-  };
+function normalizeSql(sql: string): string {
+  return sql.replace(/\s+/g, " ").trim();
+}
+
+const expectedOrderSql: Record<StatsSort, string> = {
+  adjusted: 'ORDER BY CASE WHEN s.sample >= a.minimum_sample THEN CASE WHEN s.sample > 0 THEN ((s.wins::double precision / s.sample::double precision + 1.959963984540054::double precision * 1.959963984540054::double precision / (2 * s.sample::double precision)) / (1 + 1.959963984540054::double precision * 1.959963984540054::double precision / s.sample::double precision) - 1.959963984540054::double precision * sqrt(((s.wins::double precision / s.sample::double precision * (1 - s.wins::double precision / s.sample::double precision) + 1.959963984540054::double precision * 1.959963984540054::double precision / (4 * s.sample::double precision)) / s.sample::double precision)) / (1 + 1.959963984540054::double precision * 1.959963984540054::double precision / s.sample::double precision)) ELSE 0 END ELSE NULL END DESC NULLS LAST, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
+  winRate: 'ORDER BY CASE WHEN s.sample > 0 THEN s.wins::double precision / s.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
+  buildRate: 'ORDER BY CASE WHEN b.sample > 0 THEN s.sample::double precision / b.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
+  sample: 'ORDER BY s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100'
+};
+
+function sqlOrder(sql: string): StatsSort {
+  const normalized = normalizeSql(sql);
+  const order = normalized.slice(normalized.lastIndexOf("ORDER BY"), normalized.indexOf("LIMIT 100") + "LIMIT 100".length);
+  const sort = (Object.entries(expectedOrderSql) as [StatsSort, string][]).find(([, expected]) => order === expected)?.[0];
+  if (!sort) throw new Error(`unexpected stats ORDER/LIMIT: ${order}`);
+  return sort;
 }
 
 describe("stats query boundary", () => {
@@ -109,14 +125,7 @@ describe("stats query boundary", () => {
       return { ...statsRow, baseline_wins: 600, baseline_losses: 400, baseline_sample: 1000, stat_key, item_ids: stat_key.split(":").map(Number), wins, losses: sample - wins, sample };
     });
     expect(sourceRows.length).toBeGreaterThan(100);
-    const fullSource = sourceRows.map(publicRow);
     const sorts = ["adjusted", "winRate", "buildRate", "sample"] as const;
-    const orderFragments: Record<StatsSort, RegExp> = {
-      adjusted: /ORDER BY CASE WHEN s\.sample >= a\.minimum_sample THEN CASE WHEN s\.sample > 0 THEN .*? ELSE 0 END ELSE NULL END DESC NULLS LAST, s\.sample DESC NULLS LAST, s\.stat_key COLLATE "C"\s+LIMIT 100/s,
-      winRate: /ORDER BY CASE WHEN s\.sample > 0 THEN s\.wins::double precision \/ s\.sample::double precision ELSE 0 END DESC, s\.sample DESC NULLS LAST, s\.stat_key COLLATE "C"\s+LIMIT 100/s,
-      buildRate: /ORDER BY CASE WHEN b\.sample > 0 THEN s\.sample::double precision \/ b\.sample::double precision ELSE 0 END DESC, s\.sample DESC NULLS LAST, s\.stat_key COLLATE "C"\s+LIMIT 100/s,
-      sample: /ORDER BY s\.sample DESC NULLS LAST, s\.stat_key COLLATE "C"\s+LIMIT 100/s
-    };
 
     for (const sort of sorts) {
       for (const includeLowConfidence of [true, false]) {
@@ -125,15 +134,31 @@ describe("stats query boundary", () => {
           execute: async (query) => {
             const rendered = renderedQuery(query);
             captures.push(rendered);
-            return emulateSqlOrder(sourceRows, sort, includeLowConfidence);
+            const normalized = normalizeSql(rendered.sql);
+            expect(normalized).toContain("LEFT JOIN public_item_stats s");
+            expect(normalized).toContain("s.champion_id = $4 AND s.role = $5");
+            expect(normalized).toContain("AND ($6 OR s.sample >= a.minimum_sample)");
+            expect(rendered.params).toEqual([222, 222, "BOTTOM", 222, "BOTTOM", includeLowConfidence]);
+            const sqlSort = sqlOrder(rendered.sql);
+            expect(sqlSort).toBe(sort);
+            const championId = rendered.params[3];
+            const role = rendered.params[4];
+            const include = rendered.params[5];
+            if (typeof championId !== "number" || typeof role !== "string" || typeof include !== "boolean") throw new Error("unexpected parameter types");
+            return sourceRows
+              .filter((row) => row.champion_id === championId && row.role === role && (include || row.sample >= REFERENCE_MINIMUM_SAMPLE))
+              .sort((left, right) => {
+                const expected = referenceKeys([left, right], sqlSort, true);
+                return expected[0] === left.stat_key ? -1 : expected[0] === right.stat_key ? 1 : 0;
+              })
+              .slice(0, 100);
           }
         }).stats({ championId: 222, role: "BOTTOM", view: "items", sort, includeLowConfidence });
         expect("code" in response).toBe(false);
         expect(captures).toHaveLength(1);
-        expect(captures[0]?.sql).toMatch(orderFragments[sort]);
-        expect(captures[0]?.params).toContain(222);
+        expect(sqlOrder(captures[0]!.sql)).toBe(sort);
         if (!("code" in response)) {
-          const expected = sortStats(fullSource.filter((row) => includeLowConfidence || row.sample >= 100), sort).slice(0, 100).map((row) => row.key);
+          const expected = referenceKeys(sourceRows, sort, includeLowConfidence);
           expect(response.rows).toHaveLength(Math.min(100, expected.length));
           expect(response.rows.map((row) => row.key)).toEqual(expected);
           expect(response.rows.some((row) => row.confidence === "low")).toBe(expected.some((key) => sourceRows.find((source) => source.stat_key === key)?.sample! < 100));
@@ -151,8 +176,13 @@ describe("stats query boundary", () => {
       }
     }).stats({ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: true });
 
-    expect(statement).toContain("1.959963984540054::double precision * 1.959963984540054::double precision");
-    expect(statement).toContain('s.stat_key COLLATE "C"');
+    const normalized = normalizeSql(statement);
+    const order = normalized.slice(normalized.lastIndexOf("ORDER BY"), normalized.indexOf("LIMIT 100") + "LIMIT 100".length);
+    expect(order).toBe(expectedOrderSql.adjusted);
+    expect(order).toContain("s.wins::double precision / s.sample::double precision");
+    expect(order).toContain("(1 - s.wins::double precision / s.sample::double precision)");
+    expect(order).toContain("sqrt(((");
+    expect(order).toContain("DESC NULLS LAST, s.sample DESC NULLS LAST, s.stat_key COLLATE \"C\" LIMIT 100");
   });
 
   it("projects every published champion role into a strict stats response", async () => {

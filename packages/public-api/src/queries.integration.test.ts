@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { wilson95 } from "@lol/domain";
 import { aggregatePublications, baselineAggregates, bootsAggregates, champions, collectionRuns, combinationAggregates, createMigratedTestDatabase, itemAggregates, items, patches } from "@lol/database";
 import { createPublicQueries } from "./queries";
 import { publicChampionSchema, publicChampionSummarySchema, publicMethodologySchema, publicStatsResponseSchema } from "./contracts";
@@ -20,9 +19,20 @@ function cCollationCompare(left: string, right: string): number {
   return left.length - right.length;
 }
 
+const REFERENCE_Z = 1.959963984540054;
+function referenceWilsonLower(wins: number, sample: number): number {
+  if (sample === 0) return 0;
+  const p = wins / sample;
+  const zSquared = REFERENCE_Z * REFERENCE_Z;
+  const denominator = 1 + zSquared / sample;
+  const center = (p + zSquared / (2 * sample)) / denominator;
+  const margin = REFERENCE_Z * Math.sqrt((p * (1 - p) + zSquared / (4 * sample)) / sample) / denominator;
+  return center - margin;
+}
+
 function independentReference(rows: readonly FixtureStat[], sort: Sort, includeLowConfidence: boolean): FixtureStat[] {
   const filtered = includeLowConfidence ? [...rows] : rows.filter((row) => row.sample >= 100);
-  const score = (row: FixtureStat): number | null => row.sample >= 100 ? wilson95(row.wins, row.sample).lower : null;
+  const score = (row: FixtureStat): number | null => row.sample >= 100 ? referenceWilsonLower(row.wins, row.sample) : null;
   return filtered.sort((left, right) => {
     if (sort === "adjusted") {
       const leftScore = score(left);
@@ -59,7 +69,7 @@ integration("public views and query repository", () => {
       { patchId: patch!.id, championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://ddragon.leagueoflegends.com/cdn/16.16.1/img/champion/Jinx.png" },
       { patchId: patch!.id, championId: 1, slug: "annie", name: "Annie", iconUrl: "https://ddragon.leagueoflegends.com/cdn/16.16.1/img/champion/Annie.png" }
     ]);
-    await isolated.db.insert(items).values([3031, 6672, 6692, 3006].map((itemId) => ({ patchId: patch!.id, itemId, normalizedBaseId: itemId, category: itemId === 3006 ? "BOOTS" as const : "CORE" as const, classificationReason: "test", name: `Item ${itemId}`, price: 100, iconUrl: `https://ddragon.leagueoflegends.com/cdn/16.16.1/img/item/${itemId}.png` })));
+    await isolated.db.insert(items).values([3031, 6672, 6692, 3006, 3111].map((itemId) => ({ patchId: patch!.id, itemId, normalizedBaseId: itemId, category: itemId === 3006 || itemId === 3111 ? "BOOTS" as const : "CORE" as const, classificationReason: "test", name: `Item ${itemId}`, price: 100, iconUrl: `https://ddragon.leagueoflegends.com/cdn/16.16.1/img/item/${itemId}.png` })));
     await isolated.db.insert(baselineAggregates).values([
       { publicationId: publication!.id, championId: 222, role: "BOTTOM", wins: 600, losses: 400, sample: 1000 },
       { publicationId: publication!.id, championId: 222, role: "UTILITY", wins: 55, losses: 45, sample: 100 },
@@ -73,9 +83,13 @@ integration("public views and query repository", () => {
     await isolated.db.insert(combinationAggregates).values([
       { publicationId: publication!.id, championId: 222, role: "BOTTOM", size: 2, combinationKey: "3031:6672", wins: 60, losses: 40, sample: 100 },
       { publicationId: publication!.id, championId: 222, role: "BOTTOM", size: 2, combinationKey: "3031:6692", wins: 40, losses: 40, sample: 80 },
-      { publicationId: publication!.id, championId: 222, role: "BOTTOM", size: 3, combinationKey: "3031:6672:6692", wins: 55, losses: 45, sample: 100 }
+      { publicationId: publication!.id, championId: 222, role: "BOTTOM", size: 3, combinationKey: "3031:6672:6692", wins: 55, losses: 45, sample: 100 },
+      { publicationId: publication!.id, championId: 222, role: "BOTTOM", size: 3, combinationKey: "3006:3031:6672", wins: 40, losses: 40, sample: 80 }
     ]);
-    await isolated.db.insert(bootsAggregates).values({ publicationId: publication!.id, championId: 222, role: "BOTTOM", itemId: 3006, wins: 60, losses: 40, sample: 100 });
+    await isolated.db.insert(bootsAggregates).values([
+      { publicationId: publication!.id, championId: 222, role: "BOTTOM", itemId: 3006, wins: 60, losses: 40, sample: 100 },
+      { publicationId: publication!.id, championId: 222, role: "BOTTOM", itemId: 3111, wins: 40, losses: 40, sample: 80 }
+    ]);
   });
 
   afterAll(async () => { await isolated?.close(); });
@@ -103,6 +117,65 @@ integration("public views and query repository", () => {
     if (!("code" in hidden) && !("code" in shown)) {
       expect(hidden.rows.every((row) => row.sample >= hidden.minimumSample)).toBe(true);
       expect(shown.rows.some((row) => row.sample < shown.minimumSample)).toBe(true);
+    }
+  });
+
+  it("matches the independent key oracle for every view, sort, and confidence flag", async () => {
+    const sourceByView: Record<"items" | "pairs" | "trios" | "boots", FixtureStat[]> = {
+      items: [
+        { key: "3031", wins: 60, losses: 40, sample: 100 },
+        { key: "6672", wins: 40, losses: 40, sample: 80 }
+      ],
+      pairs: [
+        { key: "3031:6672", wins: 60, losses: 40, sample: 100 },
+        { key: "3031:6692", wins: 40, losses: 40, sample: 80 }
+      ],
+      trios: [
+        { key: "3031:6672:6692", wins: 55, losses: 45, sample: 100 },
+        { key: "3006:3031:6672", wins: 40, losses: 40, sample: 80 }
+      ],
+      boots: [
+        { key: "3006", wins: 60, losses: 40, sample: 100 },
+        { key: "3111", wins: 40, losses: 40, sample: 80 }
+      ]
+    };
+    const expectedKeys: Record<keyof typeof sourceByView, Record<Sort, Record<"false" | "true", string[]>>> = {
+      items: {
+        adjusted: { false: ["3031"], true: ["3031", "6672"] },
+        winRate: { false: ["3031"], true: ["3031", "6672"] },
+        buildRate: { false: ["3031"], true: ["3031", "6672"] },
+        sample: { false: ["3031"], true: ["3031", "6672"] }
+      },
+      pairs: {
+        adjusted: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
+        winRate: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
+        buildRate: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
+        sample: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] }
+      },
+      trios: {
+        adjusted: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
+        winRate: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
+        buildRate: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
+        sample: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
+      },
+      boots: {
+        adjusted: { false: ["3006"], true: ["3006", "3111"] },
+        winRate: { false: ["3006"], true: ["3006", "3111"] },
+        buildRate: { false: ["3006"], true: ["3006", "3111"] },
+        sample: { false: ["3006"], true: ["3006", "3111"] }
+      }
+    };
+    for (const view of ["items", "pairs", "trios", "boots"] as const) {
+      for (const sort of ["adjusted", "winRate", "buildRate", "sample"] as const) {
+        for (const includeLowConfidence of [false, true] as const) {
+          const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view, sort, includeLowConfidence });
+          expect("code" in response).toBe(false);
+          if ("code" in response) continue;
+          const independent = independentReference(sourceByView[view], sort, includeLowConfidence).map((row) => row.key);
+          expect(independent).toEqual(expectedKeys[view][sort][String(includeLowConfidence) as "false" | "true"]);
+          expect(response.rows.map((row) => row.key)).toEqual(independent);
+        }
+      }
     }
   });
 
@@ -151,7 +224,7 @@ integration("public views and query repository", () => {
           expect(response.rows.at(-1)?.key).toBe(expected.at(-1)?.key);
           expect(response.rows[99]?.key).toBe(expected[99]?.key);
           expect(response.rows.some((row) => row.confidence === "low")).toBe(expected.some((row) => row.sample < 100));
-          const WilsonReference = wilson95(99, 100).lower;
+          const WilsonReference = referenceWilsonLower(99, 100);
           expect(response.rows.find((row) => row.key === "7000")?.adjustedScore).toBeCloseTo(WilsonReference, 12);
         }
       }
