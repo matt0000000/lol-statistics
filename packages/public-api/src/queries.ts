@@ -40,6 +40,18 @@ const viewNames: Record<StatsView, string> = {
   boots: "public_boots_stats"
 };
 
+const wilsonZ = sql.raw("1.959963984540054");
+const canonicalKey = sql.raw('s.stat_key COLLATE "C"');
+
+function wilsonLowerBoundSql() {
+  const proportion = sql`s.wins::double precision / s.sample::double precision`;
+  const zSquared = sql`${wilsonZ} * ${wilsonZ}`;
+  const denominator = sql`(1 + ${zSquared} / s.sample::double precision)`;
+  const center = sql`(${proportion} + ${zSquared} / (2 * s.sample::double precision)) / ${denominator}`;
+  const margin = sql`${wilsonZ} * sqrt(((${proportion} * (1 - ${proportion}) + ${zSquared} / (4 * s.sample::double precision)) / s.sample::double precision)) / ${denominator}`;
+  return sql`(${center} - ${margin})`;
+}
+
 function rowsOf(value: unknown): Row[] {
   if (Array.isArray(value)) return value as Row[];
   if (value && typeof value === "object" && Array.isArray((value as { rows?: unknown }).rows)) return (value as { rows: Row[] }).rows;
@@ -181,11 +193,17 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
     async stats(input) {
       const source = viewNames[input.view];
       const sizeClause = input.view === "pairs" ? sql`AND s.size = 2` : input.view === "trios" ? sql`AND s.size = 3` : sql``;
-      // Keep the bounded SQL window aligned with the requested metric where it
-      // is expressible; the JS sorter then applies the exact shared tie-breaks.
-      const orderClause = input.sort === "winRate"
-        ? sql`ORDER BY CASE WHEN s.sample > 0 THEN s.wins::double precision / s.sample ELSE 0 END DESC, s.sample DESC, s.stat_key`
-        : sql`ORDER BY s.sample DESC NULLS LAST, s.stat_key`;
+      // Keep the bounded SQL window aligned with the exact JS comparator. The
+      // canonical keys are numeric IDs joined by ':', so the C collation is
+      // deterministic and matches localeCompare for this restricted alphabet.
+      const adjustedScore = wilsonLowerBoundSql();
+      const orderClause = input.sort === "adjusted"
+        ? sql`ORDER BY CASE WHEN s.sample >= a.minimum_sample THEN CASE WHEN s.sample > 0 THEN ${adjustedScore} ELSE 0 END ELSE NULL END DESC NULLS LAST, s.sample DESC NULLS LAST, ${canonicalKey}`
+        : input.sort === "winRate"
+          ? sql`ORDER BY CASE WHEN s.sample > 0 THEN s.wins::double precision / s.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, ${canonicalKey}`
+          : input.sort === "buildRate"
+            ? sql`ORDER BY CASE WHEN b.sample > 0 THEN s.sample::double precision / b.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, ${canonicalKey}`
+            : sql`ORDER BY s.sample DESC NULLS LAST, ${canonicalKey}`;
       const rows = await execute(sql`
         WITH active AS (SELECT * FROM public_active_publication LIMIT 1),
         selected_champion AS (
@@ -202,6 +220,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
           WHERE b.champion_id = ${input.championId} AND b.role = ${input.role}
         )
         SELECT a.*, c.champion_id AS selected_champion_id, c.slug, c.name, c.icon_url, c.splash_url,
+          c.roles,
           b.wins AS baseline_wins, b.losses AS baseline_losses, b.sample AS baseline_sample,
           s.stat_key, s.item_ids, s.wins, s.losses, s.sample
         FROM active a

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { aggregatePublications, baselineAggregates, bootsAggregates, champions, collectionRuns, combinationAggregates, createMigratedTestDatabase, itemAggregates, items, patches } from "@lol/database";
 import { createPublicQueries } from "./queries";
 import { publicChampionSchema, publicChampionSummarySchema, publicMethodologySchema, publicStatsResponseSchema } from "./contracts";
@@ -9,6 +9,8 @@ const integration = describe.skipIf(!sourceUrl);
 
 integration("public views and query repository", () => {
   let isolated: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
+  let activePatchId: number;
+  let activePublicationId: string;
 
   beforeAll(async () => {
     isolated = await createMigratedTestDatabase(sourceUrl!);
@@ -18,6 +20,8 @@ integration("public views and query repository", () => {
     await isolated.db.insert(aggregatePublications).values({ patchId: stalePatch!.id, runId: staleRun!.id, coverageStartedAt: new Date("2026-07-01T00:00:00Z"), isActive: false });
     const [run] = await isolated.db.insert(collectionRuns).values({ status: "COMPLETED", stage: "publish", minimumSample: 100 }).returning({ id: collectionRuns.id });
     const [publication] = await isolated.db.insert(aggregatePublications).values({ patchId: patch!.id, runId: run!.id, coverageStartedAt: new Date("2026-08-01T00:00:00Z"), collectedAt: new Date("2026-08-02T00:00:00Z"), isActive: true }).returning({ id: aggregatePublications.id });
+    activePatchId = patch!.id;
+    activePublicationId = publication!.id;
     await isolated.db.update(patches).set({ activePublicationId: publication!.id, publishedAt: new Date("2026-08-02T00:00:00Z") }).where(eq(patches.id, patch!.id));
     await isolated.db.insert(champions).values([
       { patchId: patch!.id, championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://ddragon.leagueoflegends.com/cdn/16.16.1/img/champion/Jinx.png" },
@@ -67,6 +71,43 @@ integration("public views and query repository", () => {
     if (!("code" in hidden) && !("code" in shown)) {
       expect(hidden.rows.every((row) => row.sample >= hidden.minimumSample)).toBe(true);
       expect(shown.rows.some((row) => row.sample < shown.minimumSample)).toBe(true);
+    }
+  });
+
+  it("keeps the exact adjusted top 100 when SQL bounds a large candidate set", async () => {
+    const candidateIds = Array.from({ length: 105 }, (_, index) => 7000 + index);
+    await isolated.db.insert(items).values(candidateIds.map((itemId) => ({
+      patchId: activePatchId,
+      itemId,
+      normalizedBaseId: itemId,
+      category: "CORE" as const,
+      classificationReason: "test-top-100",
+      name: `Candidate ${itemId}`,
+      price: 100,
+      iconUrl: `https://ddragon.leagueoflegends.com/cdn/16.16.1/img/item/${itemId}.png`
+    })));
+    await isolated.db.insert(itemAggregates).values(candidateIds.map((itemId, index) => ({
+      publicationId: activePublicationId,
+      championId: 222,
+      role: "BOTTOM" as const,
+      itemId,
+      // The 100-game candidate has a much higher Wilson lower bound than the
+      // 500-game candidates and must survive SQL LIMIT 100.
+      wins: index === 0 ? 99 : 260,
+      losses: index === 0 ? 1 : 240,
+      sample: index === 0 ? 100 : 500
+    })));
+    try {
+      const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view: "items", sort: "adjusted", includeLowConfidence: false });
+      expect("code" in response).toBe(false);
+      if (!("code" in response)) {
+        expect(response.rows).toHaveLength(100);
+        expect(response.rows[0]?.key).toBe(String(candidateIds[0]));
+        expect(response.rows.some((row) => row.key === String(candidateIds[0]))).toBe(true);
+      }
+    } finally {
+      await isolated.db.delete(itemAggregates).where(inArray(itemAggregates.itemId, candidateIds));
+      await isolated.db.delete(items).where(inArray(items.itemId, candidateIds));
     }
   });
 

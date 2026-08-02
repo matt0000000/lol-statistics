@@ -27,4 +27,15 @@ describe("sortStats", () => {
     const sorted = sortStats([row("10:20", 0.4, 100), row("2:30", 0.5, 100)], "sample");
     expect(sorted.map((item) => item.key)).toEqual(["10:20", "2:30"]);
   });
+
+  it("keeps a lower-sample high-confidence candidate in the adjusted top 100", () => {
+    const candidates = [
+      row("100", 0.9, 100),
+      ...Array.from({ length: 100 }, (_, index) => row(String(1000 + index), 0.5, 500))
+    ];
+    const top100 = sortStats(candidates, "adjusted").slice(0, 100);
+    expect(top100).toHaveLength(100);
+    expect(top100[0]?.key).toBe("100");
+    expect(top100.some((candidate) => candidate.key === "100")).toBe(true);
+  });
 });
