@@ -12,6 +12,14 @@ import type {
   StatsSort,
   StatsView
 } from "./contracts";
+import {
+  publicChampionSchema,
+  publicChampionSummarySchema,
+  publicMetaSchema,
+  publicMethodologySchema,
+  publicQueryErrorSchema,
+  publicStatsResponseSchema
+} from "./contracts";
 import { sortStats } from "./sort";
 
 export type QueryDatabase = { execute: (query: SQL) => Promise<unknown> } | { db: { execute: (query: SQL) => Promise<unknown> } };
@@ -50,7 +58,7 @@ function numberValue(value: unknown): number { return Number(value ?? 0); }
 function integerValue(value: unknown): number { return Math.trunc(numberValue(value)); }
 
 function publicMeta(row: Row): PublicMeta {
-  return {
+  return publicMetaSchema.parse({
     patch: { version: String(row.patch_version), key: String(row.patch_key) },
     scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
     coverageStartedAt: iso(row.coverage_started_at),
@@ -66,7 +74,7 @@ function publicMeta(row: Row): PublicMeta {
       observationsAccepted: integerValue(row.observations_accepted),
       observationsRejected: integerValue(row.observations_rejected)
     }
-  };
+  });
 }
 
 function championFromRow(row: Row): PublicChampion {
@@ -132,7 +140,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
   return {
     async meta() {
       const row = firstRow(await execute(sql`SELECT * FROM public_active_publication LIMIT 1`));
-      return row ? publicMeta(row) : { code: "dataset_warming" };
+      return row ? publicMeta(row) : publicQueryErrorSchema.parse({ code: "dataset_warming" });
     },
 
     async champions(search) {
@@ -149,7 +157,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         ORDER BY lower(c.name), c.champion_id
         LIMIT 50
       `);
-      return rows.map((row) => ({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) }));
+      return rows.map((row) => publicChampionSummarySchema.parse({ championId: integerValue(row.champion_id), slug: String(row.slug), name: String(row.name), iconUrl: String(row.icon_url), roles: parseRoles(row) }));
     },
 
     async champion(championId) {
@@ -163,19 +171,29 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         WHERE c.champion_id = ${championId}
         GROUP BY c.champion_id, c.slug, c.name, c.icon_url, c.splash_url
       `);
-      if (rows.length === 0) return { code: "champion_not_found" };
+      if (rows.length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
       const champion = championFromRow(rows[0]!);
       champion.roles = parseRoles(rows[0]!);
-      return champion;
+      if (champion.roles.length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
+      return publicChampionSchema.parse(champion);
     },
 
     async stats(input) {
       const source = viewNames[input.view];
       const sizeClause = input.view === "pairs" ? sql`AND s.size = 2` : input.view === "trios" ? sql`AND s.size = 3` : sql``;
+      // Keep the bounded SQL window aligned with the requested metric where it
+      // is expressible; the JS sorter then applies the exact shared tie-breaks.
+      const orderClause = input.sort === "winRate"
+        ? sql`ORDER BY CASE WHEN s.sample > 0 THEN s.wins::double precision / s.sample ELSE 0 END DESC, s.sample DESC, s.stat_key`
+        : sql`ORDER BY s.sample DESC NULLS LAST, s.stat_key`;
       const rows = await execute(sql`
         WITH active AS (SELECT * FROM public_active_publication LIMIT 1),
         selected_champion AS (
-          SELECT c.champion_id, c.slug, c.name, c.icon_url, c.splash_url
+          SELECT c.champion_id, c.slug, c.name, c.icon_url, c.splash_url,
+            COALESCE((SELECT ARRAY_AGG(DISTINCT b2.role ORDER BY b2.role)
+              FROM public_champion_role_baselines b2
+              JOIN active a2 ON a2.publication_id = b2.publication_id
+              WHERE b2.champion_id = c.champion_id), ARRAY[]::role[]) AS roles
           FROM public_champions c JOIN active a ON a.patch_id = c.patch_id
           WHERE c.champion_id = ${input.championId}
         ),
@@ -191,18 +209,20 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         LEFT JOIN selected_baseline b ON true
         LEFT JOIN ${sql.raw(source)} s ON s.publication_id = a.publication_id AND s.champion_id = ${input.championId} AND s.role = ${input.role} ${sizeClause}
           AND (${input.includeLowConfidence} OR s.sample >= a.minimum_sample)
-        ORDER BY s.sample DESC NULLS LAST, s.stat_key
+        ${orderClause}
+        LIMIT 100
       `);
-      if (rows.length === 0) return { code: "dataset_warming" };
+      if (rows.length === 0) return publicQueryErrorSchema.parse({ code: "dataset_warming" });
       const first = rows[0]!;
-      if (first.selected_champion_id == null) return { code: "champion_not_found" };
-      if (first.baseline_sample == null) return { code: "role_not_found" };
+      if (first.selected_champion_id == null) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
+      if (first.baseline_sample == null) return publicQueryErrorSchema.parse({ code: "role_not_found" });
       const minimumSample = integerValue(first.minimum_sample);
       const baseline = baselineFromRow(first);
       const champion = championFromRow(first);
-      champion.roles = [input.role];
+      champion.roles = parseRoles(first);
+      if (champion.roles.length === 0) return publicQueryErrorSchema.parse({ code: "champion_not_found" });
       const stats = rows.filter((row) => row.stat_key != null).map((row) => statRow(row, minimumSample, baseline.sample, baseline.wins));
-      return {
+      return publicStatsResponseSchema.parse({
         meta: publicMeta(first),
         champion,
         role: input.role,
@@ -212,11 +232,11 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         includeLowConfidence: input.includeLowConfidence,
         minimumSample,
         rows: sortStats(stats, input.sort).slice(0, 100)
-      };
+      });
     },
 
     async methodology() {
-      return {
+      return publicMethodologySchema.parse({
         version: "1",
         scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
         formulas: {
@@ -228,7 +248,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         minimumSample: 100,
         lowConfidence: "Rows below the publication minimum sample are hidden by default and never receive an adjusted recommendation score.",
         limitations: ["These aggregates describe correlation, not causation.", "Completed-item results include survivorship and gold-lead bias.", "Rank is measured at collection time."]
-      };
+      });
     }
   };
 }
