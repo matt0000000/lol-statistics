@@ -6,6 +6,7 @@ describe("statistics URL controls", () => {
   it("preserves canonical role and controls while omitting defaults", () => {
     expect(statsHref("/champions/a%20b", "BOTTOM", "items", "adjusted", false)).toBe("/champions/a%20b?role=BOTTOM");
     expect(statsHref("/champions/jinx", "BOTTOM", "pairs", "sample", true)).toBe("/champions/jinx?role=BOTTOM&view=pairs&sort=sample&lowConfidence=1");
+    expect(statsHref("/champions/jinx", "BOTTOM", "items", "baselineDelta", true)).toBe("/champions/jinx?role=BOTTOM&sort=baselineDelta&lowConfidence=1");
   });
 
   it("renders all views with one active page", () => {

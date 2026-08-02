@@ -68,6 +68,8 @@ describe("champion page resolver", () => {
     expect(parseStatsParams({ role: "BOTTOM", view: "trios", sort: "sample", lowConfidence: "1" })).toEqual({ role: "BOTTOM", view: "trios", sort: "sample", lowConfidence: true });
     expect(parseStatsParams({ role: ["BOTTOM"], lowConfidence: ["1", "0"] })).toEqual({ role: null, view: "items", sort: "adjusted", lowConfidence: false });
     await expect(resolveChampionPage({ slug: "JINX", searchParams: { role: "BOTTOM", view: "pairs", sort: "sample", lowConfidence: "1" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=BOTTOM&view=pairs&sort=sample&lowConfidence=1" });
+    expect(parseStatsParams({ role: "BOTTOM", sort: "baselineDelta" })).toEqual({ role: "BOTTOM", view: "items", sort: "baselineDelta", lowConfidence: false });
+    await expect(resolveChampionPage({ slug: "JINX", searchParams: { role: "BOTTOM", sort: "baselineDelta" }, queries: queries() })).resolves.toMatchObject({ kind: "redirect", location: "/champions/jinx?role=BOTTOM&sort=baselineDelta" });
   });
 
   it("canonicalizes controls even when the slug is already canonical", async () => {

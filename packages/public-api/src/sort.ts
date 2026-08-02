@@ -10,6 +10,7 @@ export function compareCanonicalKeys(left: string, right: string): number {
 
 function valueFor(row: PublicStatRow, sort: Exclude<StatsSort, "adjusted">): number {
   if (sort === "winRate") return row.rawWinRate;
+  if (sort === "baselineDelta") return row.baselineDelta;
   if (sort === "buildRate") return row.buildRate;
   return row.sample;
 }

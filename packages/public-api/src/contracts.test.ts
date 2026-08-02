@@ -26,6 +26,10 @@ describe("public contracts", () => {
     expect(publicStatRowSchema.safeParse({ ...row, rawWinRate: Number.NaN }).success).toBe(false);
   });
 
+  it("accepts baseline-difference as a public statistics sort", () => {
+    expect(publicStatsResponseSchema.parse(responseFixture({ sort: "baselineDelta" })).sort).toBe("baselineDelta");
+  });
+
   it("requires low-confidence rows to have no recommendation score", () => {
     expect(publicStatRowSchema.safeParse({ ...row, confidence: "low", adjustedScore: null }).success).toBe(true);
     expect(publicStatRowSchema.safeParse({ ...row, confidence: "low", adjustedScore: 0.5 }).success).toBe(false);

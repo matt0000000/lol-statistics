@@ -28,9 +28,12 @@ describe("StatsTable", () => {
   it("shows evidence columns and labels a low-confidence row", () => {
     render(<StatsTable response={response} />);
     expect(screen.getByRole("columnheader", { name: "Win rate" })).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Baseline delta" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Baseline delta" })).toHaveAttribute("href", expect.stringContaining("sort=baselineDelta"));
     expect(screen.getByText("95% CI 45.2%–64.4%")).toBeVisible();
     expect(screen.getByText("Low confidence")).toBeVisible();
     expect(screen.getByText("100 games")).toBeVisible();
+    expect(screen.getByText("2 Aug 2026, 00:00 UTC")).toBeVisible();
     expect(screen.getByLabelText("Infinity Edge")).toBeVisible();
   });
 
@@ -38,5 +41,6 @@ describe("StatsTable", () => {
     const noRecommended = publicStatsResponseSchema.parse({ ...response, includeLowConfidence: false, rows: [] });
     render(<StatsTable response={noRecommended} />);
     expect(screen.getByText(/No recommended results/i)).toBeVisible();
+    expect(screen.getByText("2 Aug 2026, 00:00 UTC")).toBeVisible();
   });
 });

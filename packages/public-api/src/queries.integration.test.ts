@@ -8,7 +8,7 @@ const sourceUrl = process.env.TEST_DATABASE_URL;
 const integration = describe.skipIf(!sourceUrl);
 
 type FixtureStat = { key: string; wins: number; losses: number; sample: number };
-type Sort = "adjusted" | "winRate" | "buildRate" | "sample";
+type Sort = "adjusted" | "winRate" | "baselineDelta" | "buildRate" | "sample";
 
 function cCollationCompare(left: string, right: string): number {
   const length = Math.min(left.length, right.length);
@@ -41,8 +41,8 @@ function independentReference(rows: readonly FixtureStat[], sort: Sort, includeL
       if (leftScore !== null && rightScore === null) return -1;
       if (leftScore !== null && rightScore !== null && leftScore !== rightScore) return rightScore > leftScore ? 1 : -1;
     } else {
-      const leftValue = sort === "winRate" ? left.wins / left.sample : sort === "buildRate" ? left.sample / 1000 : left.sample;
-      const rightValue = sort === "winRate" ? right.wins / right.sample : sort === "buildRate" ? right.sample / 1000 : right.sample;
+      const leftValue = sort === "winRate" ? left.wins / left.sample : sort === "buildRate" ? left.sample / 1000 : sort === "baselineDelta" ? left.wins / left.sample - 0.6 : left.sample;
+      const rightValue = sort === "winRate" ? right.wins / right.sample : sort === "buildRate" ? right.sample / 1000 : sort === "baselineDelta" ? right.wins / right.sample - 0.6 : right.sample;
       if (leftValue !== rightValue) return rightValue > leftValue ? 1 : -1;
     }
     return right.sample - left.sample || cCollationCompare(left.key, right.key);
@@ -106,7 +106,7 @@ integration("public views and query repository", () => {
   it("serves every view and sort with strict response contracts", async () => {
     const queries = createPublicQueries(isolated.db);
     for (const view of ["items", "pairs", "trios", "boots"] as const) {
-      for (const sort of ["adjusted", "winRate", "buildRate", "sample"] as const) {
+      for (const sort of ["adjusted", "winRate", "baselineDelta", "buildRate", "sample"] as const) {
         const response = await queries.stats({ championId: 222, role: "BOTTOM", view, sort, includeLowConfidence: true });
         expect("code" in response).toBe(false);
         if (!("code" in response)) publicStatsResponseSchema.parse(response);
@@ -143,30 +143,34 @@ integration("public views and query repository", () => {
       items: {
         adjusted: { false: ["3031"], true: ["3031", "6672"] },
         winRate: { false: ["3031"], true: ["3031", "6672"] },
+        baselineDelta: { false: ["3031"], true: ["3031", "6672"] },
         buildRate: { false: ["3031"], true: ["3031", "6672"] },
         sample: { false: ["3031"], true: ["3031", "6672"] }
       },
       pairs: {
         adjusted: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
         winRate: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
+        baselineDelta: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
         buildRate: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] },
         sample: { false: ["3031:6672"], true: ["3031:6672", "3031:6692"] }
       },
       trios: {
         adjusted: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
         winRate: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
+        baselineDelta: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
         buildRate: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
         sample: { false: ["3031:6672:6692"], true: ["3031:6672:6692", "3006:3031:6672"] },
       },
       boots: {
         adjusted: { false: ["3006"], true: ["3006", "3111"] },
         winRate: { false: ["3006"], true: ["3006", "3111"] },
+        baselineDelta: { false: ["3006"], true: ["3006", "3111"] },
         buildRate: { false: ["3006"], true: ["3006", "3111"] },
         sample: { false: ["3006"], true: ["3006", "3111"] }
       }
     };
     for (const view of ["items", "pairs", "trios", "boots"] as const) {
-      for (const sort of ["adjusted", "winRate", "buildRate", "sample"] as const) {
+      for (const sort of ["adjusted", "winRate", "baselineDelta", "buildRate", "sample"] as const) {
         for (const includeLowConfidence of [false, true] as const) {
           const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view, sort, includeLowConfidence });
           expect("code" in response).toBe(false);
@@ -212,7 +216,7 @@ integration("public views and query repository", () => {
         }))
       ];
       expect(fixtureRows.length).toBeGreaterThan(100);
-      for (const sort of ["adjusted", "winRate", "buildRate", "sample"] as const) {
+      for (const sort of ["adjusted", "winRate", "baselineDelta", "buildRate", "sample"] as const) {
         for (const includeLowConfidence of [true, false]) {
           const expected = independentReference(fixtureRows, sort, includeLowConfidence);
           const response = await createPublicQueries(isolated.db).stats({ championId: 222, role: "BOTTOM", view: "items", sort, includeLowConfidence });

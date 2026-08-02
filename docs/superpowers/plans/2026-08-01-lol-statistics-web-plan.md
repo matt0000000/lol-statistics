@@ -15,7 +15,7 @@
 - A champion page has no preselected role; the visitor explicitly chooses an available role.
 - `UTILITY` is displayed as Support.
 - Views are Items, 2-item builds, 3-item builds, and Boots.
-- Default sorting uses adjusted score; optional sorts are raw win rate, build rate, and sample.
+- Default sorting uses adjusted score; optional sorts are raw win rate, baseline difference, build rate, and sample.
 - Results below 100 games are hidden by default and clearly marked when shown.
 - Every results page shows patch, scope, coverage start, publication time, baseline, sample, and correlation warning.
 - The web process cannot select PUUIDs, raw observations, Riot secrets, or individual match history.
@@ -82,7 +82,7 @@ playwright.config.ts
 
 ```ts
 export const statsViewSchema = z.enum(["items", "pairs", "trios", "boots"]);
-export const statsSortSchema = z.enum(["adjusted", "winRate", "buildRate", "sample"]);
+export const statsSortSchema = z.enum(["adjusted", "winRate", "baselineDelta", "buildRate", "sample"]);
 export type StatsView = z.infer<typeof statsViewSchema>;
 export type StatsSort = z.infer<typeof statsSortSchema>;
 
@@ -127,6 +127,7 @@ Expected: FAIL because `sortStats` does not exist.
 const valueFor = (row: PublicStatRow, sort: StatsSort): number => {
   if (sort === "adjusted") return row.adjustedScore ?? Number.NEGATIVE_INFINITY;
   if (sort === "winRate") return row.rawWinRate;
+  if (sort === "baselineDelta") return row.baselineDelta;
   if (sort === "buildRate") return row.buildRate;
   return row.sample;
 };

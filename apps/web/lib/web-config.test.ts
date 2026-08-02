@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readWebConfig } from "./web-config";
+import { metadataForEnvironment } from "../app/layout";
 
 describe("readWebConfig", () => {
   it("accepts only the read-only database URL and public site URL", () => {
@@ -45,5 +46,11 @@ describe("readWebConfig", () => {
       message = String(error);
     }
     expect(message).not.toContain(secret);
+  });
+
+  it("uses the configured public site origin for metadata and rejects an unsafe origin", () => {
+    expect(metadataForEnvironment({ PUBLIC_SITE_URL: "https://stats.example/app/" }).metadataBase?.toString()).toBe("https://stats.example/app");
+    expect(() => metadataForEnvironment({ PUBLIC_SITE_URL: "javascript:alert(1)" })).toThrow("Invalid public site URL");
+    expect(() => metadataForEnvironment({ NODE_ENV: "production", PUBLIC_SITE_URL: "http://stats.example" })).toThrow("Invalid public site URL");
   });
 });

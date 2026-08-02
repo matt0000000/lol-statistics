@@ -81,7 +81,7 @@ function referenceWilsonLower(wins: number, sample: number): number {
 function referenceKeys(rows: readonly SourceRow[], sort: StatsSort, includeLowConfidence: boolean): string[] {
   const filtered = rows.filter((row) => row.champion_id === 222 && row.role === "BOTTOM" && (includeLowConfidence || row.sample >= REFERENCE_MINIMUM_SAMPLE));
   const score = (row: SourceRow): number | null => row.sample >= REFERENCE_MINIMUM_SAMPLE ? referenceWilsonLower(row.wins, row.sample) : null;
-  const metric = (row: SourceRow): number => sort === "winRate" ? row.wins / row.sample : sort === "buildRate" ? row.sample / row.baseline_sample : row.sample;
+  const metric = (row: SourceRow): number => sort === "winRate" ? row.wins / row.sample : sort === "buildRate" ? row.sample / row.baseline_sample : sort === "baselineDelta" ? row.wins / row.sample - row.baseline_wins / row.baseline_sample : row.sample;
   return [...filtered].sort((left, right) => {
     if (sort === "adjusted") {
       const leftScore = score(left);
@@ -107,6 +107,7 @@ const expectedOrderSql: Record<StatsSort, string> = {
   adjusted: 'ORDER BY CASE WHEN s.sample >= a.minimum_sample THEN CASE WHEN s.sample > 0 THEN ((s.wins::double precision / s.sample::double precision + 1.959963984540054::double precision * 1.959963984540054::double precision / (2 * s.sample::double precision)) / (1 + 1.959963984540054::double precision * 1.959963984540054::double precision / s.sample::double precision) - 1.959963984540054::double precision * sqrt(((s.wins::double precision / s.sample::double precision * (1 - s.wins::double precision / s.sample::double precision) + 1.959963984540054::double precision * 1.959963984540054::double precision / (4 * s.sample::double precision)) / s.sample::double precision)) / (1 + 1.959963984540054::double precision * 1.959963984540054::double precision / s.sample::double precision)) ELSE 0 END ELSE NULL END DESC NULLS LAST, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
   winRate: 'ORDER BY CASE WHEN s.sample > 0 THEN s.wins::double precision / s.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
   buildRate: 'ORDER BY CASE WHEN b.sample > 0 THEN s.sample::double precision / b.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
+  baselineDelta: 'ORDER BY CASE WHEN s.sample > 0 AND b.sample > 0 THEN s.wins::double precision / s.sample::double precision - b.wins::double precision / b.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100',
   sample: 'ORDER BY s.sample DESC NULLS LAST, s.stat_key COLLATE "C" LIMIT 100'
 };
 
@@ -130,7 +131,7 @@ describe("stats query boundary", () => {
       return { ...statsRow, baseline_wins: 600, baseline_losses: 400, baseline_sample: 1000, stat_key, item_ids: ids, item_metadata: ids.map((id) => ({ id, name: `Item ${id}`, iconUrl: `https://example.test/${id}.png` })), wins, losses: sample - wins, sample };
     });
     expect(sourceRows.length).toBeGreaterThan(100);
-    const sorts = ["adjusted", "winRate", "buildRate", "sample"] as const;
+    const sorts = ["adjusted", "winRate", "baselineDelta", "buildRate", "sample"] as const;
 
     for (const sort of sorts) {
       for (const includeLowConfidence of [true, false]) {

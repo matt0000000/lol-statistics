@@ -38,3 +38,10 @@ export function formatAge(publishedAt: string, now = Date.now()): string {
   const days = Math.max(0, Math.floor((now - published) / 86_400_000));
   return days === 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
 }
+
+export function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? `${date.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" })} UTC`
+    : "—";
+}

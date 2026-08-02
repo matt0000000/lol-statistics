@@ -30,4 +30,3 @@ Docker/PostgreSQL is unavailable (Docker Desktop WSL integration is disabled),
 and the Playwright Chromium binary cannot start because required host library
 `libnspr4.so` is missing. E2E and database seed gates therefore remain to be
 run in CI or a provisioned Linux/PostgreSQL environment.
-

@@ -34,16 +34,18 @@ test("supports every statistics view and each sort's active semantics and row or
 
   await page.getByRole("link", { name: "Items", exact: true }).click();
   const orderBy: Record<string, string> = {};
-  for (const [label, sort] of [["Adjusted score", "adjusted"], ["Win rate", "winRate"], ["Build rate", "buildRate"], ["Sample games", "sample"]] as const) {
+  for (const [label, sort] of [["Adjusted score", "adjusted"], ["Win rate", "winRate"], ["Baseline delta", "baselineDelta"], ["Build rate", "buildRate"], ["Sample games", "sample"]] as const) {
     await page.getByRole("link", { name: label, exact: true }).click();
     await expect(page.getByRole("link", { name: label, exact: true })).toHaveAttribute("aria-current", "page");
     if (sort !== "adjusted") await expect(page).toHaveURL(new RegExp(`sort=${sort}`));
     const values = await page.locator("tbody tr").evaluateAll((rows, column) => rows.map((row) => {
       const cell = row.querySelector(`[data-label="${column}"]`);
-      return Number((cell?.textContent ?? "").replace(/[^0-9.-]/g, ""));
+      const text = (cell?.textContent ?? "").replace("−", "-").replace("+", "");
+      return Number(text.replace(/[^0-9.-]/g, ""));
     }), label);
     expect(values.length).toBeGreaterThan(1);
     expect(values).toEqual([...values].sort((left, right) => right - left));
+    if (sort === "baselineDelta") expect(values[0]).toBeGreaterThan(values.at(-1)!);
     orderBy[sort] = await page.locator("tbody tr").first().innerText();
   }
   expect(orderBy.winRate).not.toBe(orderBy.sample);

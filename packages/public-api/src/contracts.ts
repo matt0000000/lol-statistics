@@ -20,7 +20,7 @@ export function isRole(value: unknown): value is Role {
 }
 export const statsViewSchema = z.enum(["items", "pairs", "trios", "boots"]);
 export type StatsView = z.infer<typeof statsViewSchema>;
-export const statsSortSchema = z.enum(["adjusted", "winRate", "buildRate", "sample"]);
+export const statsSortSchema = z.enum(["adjusted", "winRate", "baselineDelta", "buildRate", "sample"]);
 export type StatsSort = z.infer<typeof statsSortSchema>;
 
 export const publicScopeSchema = z.object({

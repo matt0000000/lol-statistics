@@ -21,11 +21,13 @@ const populatedStatus: PublicStatus = {
 
 describe("public content", () => {
   it("renders the exact Riot legal notice and navigation", () => {
-    const view = render(<RootLayout><main>content</main></RootLayout>);
+    const layout = RootLayout({ children: <main>content</main> });
+    const view = render(layout);
     expect(view.container.textContent).toContain("This product is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.");
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Methodology" })).toHaveAttribute("href", "/methodology");
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
+    expect((layout as { props: { lang: string } }).props.lang).toBe("en");
   });
 
   it("discloses the full methodology without implying unsupported modes", async () => {

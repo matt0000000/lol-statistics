@@ -221,7 +221,7 @@ function statRow(row: Row, minimumSample: number, baselineSample: number, baseli
     sample,
     rawWinRate,
     buildRate,
-    baselineDelta: Number((rawWinRate - baselineWinRate).toFixed(12)),
+    baselineDelta: rawWinRate - baselineWinRate,
     confidenceLower: interval.lower,
     confidenceUpper: interval.upper,
     adjustedScore: recommended ? interval.lower : null,
@@ -337,7 +337,9 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
         ? sql`ORDER BY CASE WHEN s.sample >= a.minimum_sample THEN CASE WHEN s.sample > 0 THEN ${adjustedScore} ELSE 0 END ELSE NULL END DESC NULLS LAST, s.sample DESC NULLS LAST, ${canonicalKey}`
         : input.sort === "winRate"
           ? sql`ORDER BY CASE WHEN s.sample > 0 THEN s.wins::double precision / s.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, ${canonicalKey}`
-          : input.sort === "buildRate"
+          : input.sort === "baselineDelta"
+            ? sql`ORDER BY CASE WHEN s.sample > 0 AND b.sample > 0 THEN s.wins::double precision / s.sample::double precision - b.wins::double precision / b.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, ${canonicalKey}`
+            : input.sort === "buildRate"
             ? sql`ORDER BY CASE WHEN b.sample > 0 THEN s.sample::double precision / b.sample::double precision ELSE 0 END DESC, s.sample DESC NULLS LAST, ${canonicalKey}`
             : sql`ORDER BY s.sample DESC NULLS LAST, ${canonicalKey}`;
       const rows = await execute(sql`

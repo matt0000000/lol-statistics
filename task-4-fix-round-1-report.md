@@ -26,4 +26,3 @@ strict public statistics contracts, and rounded signed formatting.
 - `bun run test` — 293 passed, 69 skipped (362 total)
 - `bun run typecheck` — all workspace packages passed
 - `git diff --check` — passed
-

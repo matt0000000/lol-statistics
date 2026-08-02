@@ -211,7 +211,7 @@ The read-only web API provides:
 - `GET /api/meta`: active patch, fixed scope, coverage start, publication time, public-safe run health, and minimum sample
 - `GET /api/champions`: searchable champion catalog with roles present in the active publication
 - `GET /api/champions/{championId}`: public champion metadata and available roles; no role statistics without a role parameter
-- `GET /api/champions/{championId}/roles/{role}/stats?view=items|pairs|trios|boots&sort=adjusted|winRate|buildRate|sample&includeLowConfidence=false`
+- `GET /api/champions/{championId}/roles/{role}/stats?view=items|pairs|trios|boots&sort=adjusted|winRate|baselineDelta|buildRate|sample&includeLowConfidence=false`
 - `GET /api/methodology`: versioned public calculation and eligibility metadata
 
 Inputs use allowlisted enums and bounded pagination. Unknown champions or unavailable roles return `404`; invalid parameters return a structured `400`. If no current-patch publication exists, statistics endpoints return `503` with a machine-readable `dataset_warming` code and retry metadata.

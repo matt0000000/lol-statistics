@@ -49,6 +49,16 @@ describe("sortStats", () => {
     expect(sorted.map((item) => item.key)).toEqual(["10:20", "2:30"]);
   });
 
+  it("orders baseline deltas from positive to negative with stable ties", () => {
+    const rows = [
+      { ...row("1", 55, 100), baselineDelta: -0.05 },
+      { ...row("2", 65, 100), baselineDelta: 0.05 },
+      { ...row("3", 60, 100), baselineDelta: 0 },
+      { ...row("4", 60, 100), baselineDelta: 0 }
+    ].map((value) => publicStatRowSchema.parse(value));
+    expect(sortStats(rows, "baselineDelta").map((item) => item.key)).toEqual(["2", "3", "4", "1"]);
+  });
+
   it("keeps a lower-sample high-confidence candidate in the adjusted top 100", () => {
     const candidates = [
       row("100", 99, 100),

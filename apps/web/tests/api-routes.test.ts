@@ -93,6 +93,17 @@ describe("public API route matrix", () => {
     expect(response.headers.get("etag")).toMatch(/^"publication-/);
   });
 
+  it("accepts baseline-difference sorting and includes it in the publication cache key", async () => {
+    let input: unknown;
+    const baselineSorted = { ...stats, sort: "baselineDelta" as const };
+    trustedScopes.set(baselineSorted, "pub-1");
+    const handlers = routes({ stats: async (value) => { input = value; return baselineSorted; } });
+    const response = await handlers.stats(new Request("http://localhost/api/champions/222/roles/BOTTOM/stats?sort=baselineDelta"), { params: { championId: "222", role: "BOTTOM" } });
+    expect(response.status).toBe(200);
+    expect(input).toMatchObject({ sort: "baselineDelta" });
+    expect(response.headers.get("etag")).toContain("baselineDelta");
+  });
+
   it("supports exact, weak, and comma-separated If-None-Match values", async () => {
     const handlers = routes();
     const first = await handlers.stats(new Request("http://localhost/api/champions/222/roles/BOTTOM/stats"), { params: { championId: "222", role: "BOTTOM" } });

@@ -23,6 +23,25 @@ function normalizePublicUrl(url: URL): string {
   return `${url.origin}${path}${url.search}${url.hash}`;
 }
 
+/** Validate only the public origin for metadata generation. Build-time omission
+ * is allowed so `next build` can run with the read-only database supplied later;
+ * production runtime still fails closed when the value is absent. */
+export function readPublicSiteUrl(environment: Record<string, string | undefined> = process.env): string | undefined {
+  const raw = environment.PUBLIC_SITE_URL;
+  if (!raw) {
+    if (environment.NODE_ENV === "production" && environment.NEXT_PHASE !== "phase-production-build") {
+      throw new Error("Invalid public site URL");
+    }
+    return undefined;
+  }
+  const parsed = parseUrl(raw, ["http:", "https:"], false);
+  if (!parsed) throw new Error("Invalid public site URL");
+  if (environment.NODE_ENV === "production" && environment.NEXT_PHASE !== "phase-production-build" && parsed.protocol !== "https:") {
+    throw new Error("Invalid public site URL");
+  }
+  return normalizePublicUrl(parsed);
+}
+
 /** Parse the deliberately small web environment surface without echoing secrets. */
 export function readWebConfig(environment: Record<string, string | undefined>): WebConfig {
   const databaseReadUrl = parseUrl(environment.DATABASE_READ_URL, ["postgres:", "postgresql:"], true);
