@@ -59,6 +59,20 @@ describe("snapshotLadder", () => {
     expect(serialized).not.toContain("secret exception message");
   });
 
+  it("ignores logger failures and still persists the ladder snapshot", async () => {
+    const repository = { snapshotLadder: vi.fn().mockResolvedValue(undefined) };
+    const entries = [{ puuid: "fixture-puuid", tier: "EMERALD" as const, rank: "I", queueType: "RANKED_SOLO_5x5" as const, leaguePoints: 0, wins: 0, losses: 0 }];
+
+    await expect(snapshotLadder({
+      runId: "run-1",
+      leagueClient: { listEligiblePlayers: async () => entries },
+      repository,
+      logger: { info: () => { throw new Error("logger unavailable"); } }
+    })).resolves.toBeUndefined();
+
+    expect(repository.snapshotLadder).toHaveBeenCalledWith("run-1", entries);
+  });
+
   it("redacts dependency failures", async () => {
     const repository = { snapshotLadder: vi.fn().mockRejectedValue(new Error("secret-puuid")) };
     await expect(snapshotLadder({

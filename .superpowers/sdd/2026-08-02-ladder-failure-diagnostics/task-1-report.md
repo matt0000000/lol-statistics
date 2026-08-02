@@ -28,3 +28,12 @@ The logger is optional, uses the existing structured `info` method shape, and is
 ## Concerns
 
 No known blockers. Full PostgreSQL-backed collection execution was not attempted; this task is covered by the focused service tests and collector typecheck.
+
+## Fix round 1: best-effort lifecycle telemetry
+
+Review identified that a throwing `logger.info` call was caught by `snapshotLadder`'s dependency wrapper, which could fail/retry a stage after persistence had succeeded. Added a regression test with a throwing logger asserting the snapshot resolves and repository persistence is still invoked. Wrapped lifecycle `info` emission in a local best-effort helper that swallows logger errors while leaving fetch/persist errors unchanged.
+
+- RED: `bunx vitest run apps/collector/src/services/snapshot-ladder.test.ts` — new logger-failure test failed because the logger exception became `dependency_failure`; the other 6 tests passed.
+- GREEN: `bunx vitest run apps/collector/src/services/snapshot-ladder.test.ts` — 1 file passed, 7 tests passed.
+- Typecheck: `bunx tsc --noEmit -p apps/collector/tsconfig.json` — passed.
+- Diff check: `git diff --check` — passed.

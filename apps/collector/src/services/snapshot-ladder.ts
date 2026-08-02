@@ -19,16 +19,24 @@ export type SnapshotLadderInput = {
 export async function snapshotLadder(input: SnapshotLadderInput): Promise<void> {
   if (typeof input.runId !== "string" || input.runId.length === 0) throw new SnapshotServiceError("invalid_input");
   try {
-    input.logger?.info?.({ event: "ladder_fetch_started", runId: input.runId, stage: "LADDER" });
+    emitInfo(input.logger, { event: "ladder_fetch_started", runId: input.runId, stage: "LADDER" });
     const entries = await input.leagueClient.listEligiblePlayers();
     if (!Array.isArray(entries)) throw new SnapshotServiceError("invalid_response");
-    input.logger?.info?.({ event: "ladder_fetch_completed", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
-    input.logger?.info?.({ event: "ladder_persist_started", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
+    emitInfo(input.logger, { event: "ladder_fetch_completed", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
+    emitInfo(input.logger, { event: "ladder_persist_started", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
     await input.repository.snapshotLadder(input.runId, entries);
-    input.logger?.info?.({ event: "ladder_persist_completed", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
+    emitInfo(input.logger, { event: "ladder_persist_completed", runId: input.runId, stage: "LADDER", aggregateCount: entries.length });
   } catch (error) {
     if (error instanceof SnapshotServiceError) throw error;
     throw new SnapshotServiceError("dependency_failure", undefined, { cause: error });
+  }
+}
+
+function emitInfo(logger: SnapshotLadderInput["logger"], fields: Record<string, unknown>): void {
+  try {
+    logger?.info?.(fields);
+  } catch {
+    // Lifecycle diagnostics are best-effort and must not affect snapshot behavior.
   }
 }
 
