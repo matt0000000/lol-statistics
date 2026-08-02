@@ -64,4 +64,39 @@ describe("parseFinalInventory", () => {
     const parsed = saveValidatedMatch.mock.calls[0]?.[3] as Array<{ participantId: number; accepted: boolean }>;
     expect(parsed.map((part) => part.participantId)).toEqual([1, 2]);
   });
+
+  it("reserves every valid participant ID before assigning a malformed row", async () => {
+    const saveValidatedMatch = vi.fn().mockResolvedValue({ observationsAccepted: 1, observationsRejected: 1, replay: false });
+    const valid = { participantId: 1, puuid: "eligible-puuid", championId: 1, teamPosition: "BOTTOM", win: true, gameEndedInEarlySurrender: false, item0: 0, item1: 0, item2: 0, item3: 0, item4: 0, item5: 0, item6: 0 };
+    await ingestMatch({ runId: "run", patchId: 1, activePatch: "16.15", match: {
+      metadata: { dataVersion: "2", matchId: "TR1_5", participants: ["eligible-puuid"] },
+      info: { platformId: "TR1", queueId: 420, gameVersion: "16.15.1", gameCreation: 1, gameDuration: 1800, participants: [null, valid] }
+    }, eligiblePlayers: new Map([["eligible-puuid", { tier: "EMERALD", division: "I" }]]), catalog, observations: { saveValidatedMatch }});
+    const parsed = saveValidatedMatch.mock.calls[0]?.[3] as Array<{ participantId?: number; accepted: boolean; observation?: { participantId: number } }>;
+    expect(parsed.map((part) => part.accepted ? part.observation?.participantId : part.participantId)).toEqual([2, 1]);
+    expect(parsed[1]).toMatchObject({ accepted: true, observation: { participantId: 1 } });
+  });
+
+  it("allocates replay-stable unique synthetic IDs for multiple malformed rows", async () => {
+    const valid = { participantId: 1, puuid: "eligible-puuid", championId: 1, teamPosition: "BOTTOM", win: true, gameEndedInEarlySurrender: false, item0: 0, item1: 0, item2: 0, item3: 0, item4: 0, item5: 0, item6: 0 };
+    const makeSave = () => vi.fn().mockResolvedValue({ observationsAccepted: 1, observationsRejected: 2, replay: false });
+    const makeInput = (participants: unknown[], saveValidatedMatch: ReturnType<typeof makeSave>) => ({ runId: "run", patchId: 1, activePatch: "16.15", match: {
+      metadata: { dataVersion: "2", matchId: "TR1_6", participants: ["eligible-puuid"] },
+      info: { platformId: "TR1", queueId: 420, gameVersion: "16.15.1", gameCreation: 1, gameDuration: 1800, participants }
+    } as never, eligiblePlayers: new Map([["eligible-puuid", { tier: "EMERALD" as const, division: "I" as const }]]), catalog, observations: { saveValidatedMatch }});
+    const firstSave = makeSave();
+    await ingestMatch(makeInput([null, { puuid: "missing-fields" }, valid], firstSave));
+    const secondSave = makeSave();
+    await ingestMatch(makeInput([null, { puuid: "missing-fields" }, valid], secondSave));
+    const first = firstSave.mock.calls[0]?.[3] as Array<{ participantId?: number; accepted: boolean; observation?: { participantId: number } }>;
+    const second = secondSave.mock.calls[0]?.[3] as Array<{ participantId?: number; accepted: boolean; observation?: { participantId: number } }>;
+    const ids = (parts: typeof first) => parts.map((part) => part.accepted ? part.observation?.participantId : part.participantId);
+    expect(ids(first)).toEqual([2, 3, 1]);
+    expect(ids(second)).toEqual(ids(first));
+    expect(new Set(ids(first)).size).toBe(3);
+    const reorderedSave = makeSave();
+    await ingestMatch(makeInput([valid, null, { puuid: "missing-fields" }], reorderedSave));
+    const reordered = reorderedSave.mock.calls[0]?.[3] as typeof first;
+    expect(ids(reordered)).toEqual([1, 2, 3]);
+  });
 });

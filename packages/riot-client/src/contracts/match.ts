@@ -42,18 +42,27 @@ export const matchSchema = z.object({ metadata: metadataSchema, info: infoSchema
   const metadataUnique = new Set(match.metadata.participants);
   if (metadataUnique.size !== match.metadata.participants.length) context.addIssue({ code: "custom", path: ["metadata", "participants"], message: "metadata participants must be unique" });
   const parsedParticipants = match.info.participants.map((participant) => participantSchema.safeParse(participant));
-  // Preserve the stronger identity checks for fully valid payloads. If one
-  // element is malformed, ingestion owns its independent rejection instead.
-  if (parsedParticipants.every((result) => result.success)) {
-    const values = parsedParticipants.map((result) => result.success ? result.data : undefined);
-    const infoPuuids = values.map((participant) => participant!.puuid);
-    const infoPuuidUnique = new Set(infoPuuids);
-    const participantIds = values.map((participant) => participant!.participantId);
-    if (infoPuuidUnique.size !== infoPuuids.length) context.addIssue({ code: "custom", path: ["info", "participants"], message: "participant PUUIDs must be unique" });
-    if (new Set(participantIds).size !== participantIds.length) context.addIssue({ code: "custom", path: ["info", "participants"], message: "participant IDs must be unique" });
-    const metadataParticipants = [...match.metadata.participants].sort();
-    const infoParticipants = [...infoPuuids].sort();
-    if (metadataParticipants.length !== infoParticipants.length || metadataParticipants.some((value, index) => value !== infoParticipants[index])) {
+  const metadataParticipants = new Set(match.metadata.participants);
+  const rawPuuids = match.info.participants.flatMap((participant) => {
+    if (typeof participant !== "object" || participant === null || Array.isArray(participant)) return [];
+    const puuid = (participant as { puuid?: unknown }).puuid;
+    return typeof puuid === "string" && puuid.length > 0 ? [puuid] : [];
+  });
+  if (new Set(rawPuuids).size !== rawPuuids.length) context.addIssue({ code: "custom", path: ["info", "participants"], message: "participant PUUIDs must be unique" });
+  for (const puuid of rawPuuids) {
+    if (!metadataParticipants.has(puuid)) context.addIssue({ code: "custom", path: ["metadata", "participants"], message: "metadata participants do not match info participants" });
+  }
+
+  const validParticipants = parsedParticipants.flatMap((result) => result.success ? [result.data] : []);
+  const participantIds = validParticipants.map((participant) => participant.participantId);
+  if (new Set(participantIds).size !== participantIds.length) context.addIssue({ code: "custom", path: ["info", "participants"], message: "participant IDs must be unique" });
+
+  // When every row exposes a usable PUUID, the metadata must be an exact
+  // identity set. If any row lacks one, only the known subset is enforceable.
+  if (rawPuuids.length === match.info.participants.length) {
+    const metadataValues = [...match.metadata.participants].sort();
+    const infoValues = [...rawPuuids].sort();
+    if (metadataValues.length !== infoValues.length || metadataValues.some((value, index) => value !== infoValues[index])) {
       context.addIssue({ code: "custom", path: ["metadata", "participants"], message: "metadata participants do not match info participants" });
     }
   }

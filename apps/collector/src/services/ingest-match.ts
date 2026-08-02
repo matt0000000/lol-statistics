@@ -67,20 +67,24 @@ export async function ingestMatch(input: IngestMatchInput): Promise<IngestMatchR
   const activePatch = normalizeActivePatch(input.activePatch);
   // Keep malformed active-patch diagnostics inside participant eligibility; do
   // not throw payload-bearing errors before a safe rejected audit is possible.
-  const usedParticipantIds = new Set<number>();
+  // Reserve every valid participant ID up front so malformed rows cannot claim
+  // an ID that a later valid row will use.
+  const reservedValidIds = new Set(parsedBoundary.flatMap((result) => result.success ? [result.data.participantId] : []));
+  const allocatedSyntheticIds = new Set<number>();
+  const seenValidIds = new Set<number>();
   const parsed = parsedBoundary.map((boundary, index) => {
     if (!boundary.success) {
-      const participantId = rejectionParticipantId(index, usedParticipantIds);
-      usedParticipantIds.add(participantId);
+      const participantId = rejectionParticipantId(index, reservedValidIds, allocatedSyntheticIds);
+      allocatedSyntheticIds.add(participantId);
       return { accepted: false as const, participantId, reason: "required_field" as const };
     }
     const participant = boundary.data;
-    if (usedParticipantIds.has(participant.participantId)) {
-      const participantId = rejectionParticipantId(index, usedParticipantIds);
-      usedParticipantIds.add(participantId);
+    if (seenValidIds.has(participant.participantId)) {
+      const participantId = rejectionParticipantId(index, reservedValidIds, allocatedSyntheticIds);
+      allocatedSyntheticIds.add(participantId);
       return { accepted: false as const, participantId, reason: "required_field" as const };
     }
-    usedParticipantIds.add(participant.participantId);
+    seenValidIds.add(participant.participantId);
     return parseParticipant(participant, input.match, remake, lookupEligibility(input.eligiblePlayers, participant.puuid), input.catalog, activePatch);
   });
   const result = await input.observations.saveValidatedMatch(input.runId, input.patchId, input.match, parsed);
@@ -89,9 +93,9 @@ export async function ingestMatch(input: IngestMatchInput): Promise<IngestMatchR
 }
 
 /** Allocate a deterministic, collision-free participant index for malformed rows. */
-function rejectionParticipantId(index: number, used: ReadonlySet<number>): number {
+function rejectionParticipantId(index: number, reserved: ReadonlySet<number>, allocated: ReadonlySet<number>): number {
   let value = index + 1;
-  while (used.has(value)) value += 1;
+  while (reserved.has(value) || allocated.has(value)) value += 1;
   return value;
 }
 

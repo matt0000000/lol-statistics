@@ -104,6 +104,26 @@ describe("MatchClient", () => {
     expect(() => participantSchema.parse(malformed.info.participants[1])).toThrow();
   });
 
+  it("enforces metadata membership for malformed rows with a usable PUUID", () => {
+    const malformed = { ...validMatch, metadata: { ...validMatch.metadata, participants: ["player-a", "player-c"] }, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { puuid: "player-b" }] } };
+    expect(() => matchSchema.parse(malformed)).toThrow();
+  });
+
+  it("enforces duplicate valid identities even when another row is malformed", () => {
+    const malformed = { ...validMatch, metadata: { ...validMatch.metadata, participants: ["player-a", "player-b"] }, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { ...validMatch.info.participants[0] }, { puuid: "player-b" }] } };
+    expect(() => matchSchema.parse(malformed)).toThrow();
+  });
+
+  it("checks exact metadata identity when malformed rows still expose PUUIDs", () => {
+    const malformed = { ...validMatch, metadata: { ...validMatch.metadata, participants: ["player-a", "player-b", "player-c"] }, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { puuid: "player-b" }] } };
+    expect(() => matchSchema.parse(malformed)).toThrow();
+  });
+
+  it("allows a known metadata subset when a malformed row has no PUUID", () => {
+    const malformed = { ...validMatch, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { win: "unknown" }] } };
+    expect(matchSchema.parse(malformed).info.participants).toEqual(malformed.info.participants);
+  });
+
   it("returns a mixed match when the HTTP parser applies the match schema", async () => {
     const malformed = { ...validMatch, info: { ...validMatch.info, participants: [validMatch.info.participants[0], { puuid: "player-b", win: "unknown" }] } };
     const calls: Call[] = [];
