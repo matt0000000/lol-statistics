@@ -168,3 +168,276 @@ e2e/               Playwright browser flows
 fixtures/riot/     deterministic Riot and Data Dragon test fixtures
 ```
 
+## Prerequisites
+
+Install or obtain:
+
+- **Git** for cloning and normal contribution workflows.
+- **Bun** compatible with the checked-in `bun.lock`.
+- **Docker with Compose support**, or an equivalent PostgreSQL 17 instance.
+- **A Riot developer API key** for real collector runs. Development keys expire
+  and are intended for local prototyping, not scheduled public deployment.
+- **Playwright browser dependencies** only if you intend to run the E2E suite.
+
+No Riot key is needed to build the web application or run the default offline
+test suite.
+
+## Quick start
+
+```bash
+git clone https://github.com/matt0000000/lol-statistics.git
+cd lol-statistics
+bun install --frozen-lockfile
+cp .env.example .env
+docker compose up -d postgres
+bun run db:migrate
+bun run collect
+bun run dev
+```
+
+Before running the collector, open `.env` and set `RIOT_API_KEY` to your private
+development credential. Do not commit that file or paste the key into logs,
+issues, browser code, or screenshots.
+
+The default local site is <http://localhost:3000>. The first collector run can
+take significant time because it snapshots the eligible ladder, discovers and
+fetches matches, rebuilds aggregates, verifies them, and publishes atomically.
+Until a current-patch publication succeeds, the site correctly reports that
+the dataset is warming.
+
+## Configuration
+
+Start from `.env.example`:
+
+| Variable | Used by | Required | Purpose |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | migrations and collector | Yes for database writes | PostgreSQL writer connection |
+| `DATABASE_READ_URL` | web | Yes when serving data | Restricted read-only PostgreSQL connection |
+| `RIOT_PLATFORM` | collector | Fixed | Must be `TR1` |
+| `RIOT_REGION` | collector | Fixed | Must be `EUROPE` for TR1 Match-V5 routing |
+| `PUBLIC_SITE_URL` | web | Deployment-dependent | Canonical HTTP(S) origin; HTTPS is required in production |
+| `RIOT_API_KEY` | collector | Yes for real collection | Private Riot API credential |
+| `TEST_DATABASE_URL` | integration and E2E tests | Only for full database/browser tests | Writable PostgreSQL database whose name ends in `_test` |
+
+For local development, `DATABASE_URL` and `DATABASE_READ_URL` may point to the
+same `lol_stats` database. Production should use separate writer and reader
+credentials; the web reader receives access only to the public security-barrier
+views described in the [web operations guide](docs/operations/web.md).
+
+The web application never reads `RIOT_API_KEY`. The collector never exposes
+that key to the browser.
+
+## Database and collector workflow
+
+Start PostgreSQL and apply the checked-in migrations:
+
+```bash
+docker compose up -d postgres
+bun run db:migrate
+```
+
+Run one collection cycle:
+
+```bash
+bun run collect
+```
+
+Migrations are explicit; a normal collector invocation does not apply them.
+The collector is a separate process from the web application and should be
+scheduled externally—hourly by default in production. PostgreSQL advisory
+locking prevents overlapping workers, while durable stage and match
+checkpoints allow eligible failed runs to resume.
+
+Inspect public-safe collector health without printing credentials, PUUIDs, or
+private error details:
+
+```bash
+bun run collector:health -- --json
+```
+
+Collector exit codes are designed for schedulers:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | success |
+| `1` | configuration, database, or unclassified failure |
+| `2` | authentication or expired Riot key |
+| `3` | publication invariant failure |
+| `4` | exhausted transient or rate-limit failure |
+
+See [Collector operations](docs/operations/collector.md) for restart,
+checkpoint, rollover, logging, and production-key details.
+
+## Running the web application
+
+Start the development server after configuring `DATABASE_READ_URL`:
+
+```bash
+bun run dev
+```
+
+The web process reads only the active immutable publication. It does not run
+collection, write canonical data, or provide a hidden fixture fallback. A
+production build can be checked with:
+
+```bash
+bun run build
+```
+
+In production, `PUBLIC_SITE_URL` must be an HTTPS origin and the database URL
+must belong to a reader role restricted to the published public views.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `bun run dev` | Start the Next.js development server |
+| `bun run build` | Create the production web build |
+| `bun run test` | Run Vitest once; database-gated suites skip without `TEST_DATABASE_URL` |
+| `bun run test:watch` | Run Vitest in watch mode |
+| `bun run typecheck` | Type-check every workspace |
+| `bun run db:generate` | Compare the Drizzle schema with checked-in migrations |
+| `bun run db:migrate` | Apply checked-in PostgreSQL migrations |
+| `bun run collect` | Execute one resumable collection run |
+| `bun run collector:health -- --json` | Print public-safe collector health JSON |
+| `bun run seed:e2e` | Seed the explicitly configured test database |
+| `bun run test:e2e` | Run Playwright against the validated test database |
+
+Use `bun run test`, not native `bun test`, as the authoritative test command.
+The project test configuration and browser environment are wired through
+Vitest.
+
+## Testing
+
+### Fast local verification
+
+These checks do not require a Riot key:
+
+```bash
+bun run test
+bun run typecheck
+bun run build
+bun run db:generate
+bunx drizzle-kit check
+git diff --check
+```
+
+Without `TEST_DATABASE_URL`, Vitest reports the PostgreSQL-gated files as
+skipped. That is expected and must not be described as full database runtime
+coverage.
+
+### PostgreSQL integration and browser tests
+
+Create a disposable test database whose name ends in `_test`:
+
+```bash
+docker compose up -d postgres
+docker compose exec -T postgres createdb -U lol lol_stats_test
+DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run db:migrate
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run test
+TEST_DATABASE_URL=postgres://lol:lol@localhost:5432/lol_stats_test bun run test:e2e
+```
+
+The E2E workflow refuses to start unless `TEST_DATABASE_URL` is explicitly
+provided and its parsed database name ends in `_test`. It does not fall back to
+`DATABASE_URL` or `DATABASE_READ_URL`. Seeding truncates and replaces fixture
+data in that test database, so never point it at development, staging, or
+production data. Playwright also requires its normal browser and host-system
+libraries.
+
+## Public API
+
+The Next.js application exposes publication-scoped, read-only endpoints:
+
+```text
+GET /api/meta
+GET /api/champions
+GET /api/champions/{championId}
+GET /api/champions/{championId}/roles/{role}/stats
+GET /api/methodology
+```
+
+Example:
+
+```text
+/api/champions/222/roles/BOTTOM/stats?view=pairs&sort=adjusted&includeLowConfidence=false
+```
+
+Statistics requests require an explicit role. Supported controls are:
+
+- `view=items|pairs|trios|boots`
+- `sort=adjusted|winRate|baselineDelta|buildRate|sample`
+- `includeLowConfidence=true|false`
+
+Responses use strict public contracts, bounded inputs, and ETags tied to the
+immutable publication ID. When no valid current-patch publication exists,
+statistics endpoints return a machine-readable `dataset_warming` response
+instead of old-patch data.
+
+## Security and privacy
+
+The collector and web processes have intentionally different trust boundaries.
+
+Server-only data includes:
+
+- Riot API keys and database credentials
+- PUUIDs and ladder snapshots
+- canonical match records and raw final slots
+- participant observations and rejection audits
+- private collector checkpoints and error details
+
+The web process reads only security-barrier views containing current-patch
+catalog metadata, immutable aggregate publications, and public-safe collector
+status. Its production database role should have `USAGE` on the public schema
+and `SELECT` only on those views. API responses and client components are
+statically tested against imports or fields that would cross this boundary.
+
+Never add a Riot key to a `NEXT_PUBLIC_*` variable, browser fixture, client
+component, API response, committed environment file, or application log.
+
+## Dataset freshness
+
+The UI and API distinguish three states:
+
+- **Warming:** no valid publication exists for the current TR patch.
+- **Fresh:** the active publication is no more than six hours old.
+- **Stale:** the active publication is older than six hours and remains visible
+  with a warning.
+
+A failed same-patch refresh leaves the previous successful publication active.
+At patch rollover, old-patch data is deliberately removed from the current
+pointer and the new patch warms until it passes aggregate verification and
+publication. This prevents stale patch data from being mislabeled as current.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Action |
+| --- | --- | --- |
+| Collector exits with code `2` | Missing or expired Riot development key | Refresh the key in the Riot developer portal and update the private `.env` value |
+| `ECONNREFUSED` on port 5432 | PostgreSQL is stopped or the URL is wrong | Run `docker compose up -d postgres` and check `DATABASE_URL`/`DATABASE_READ_URL` |
+| Site reports `dataset_warming` | No verified publication exists for the active patch | Run the collector and inspect `bun run collector:health -- --json` |
+| Site shows a stale warning | Last successful same-patch publication is over six hours old | Inspect collector health, Riot authentication, rate limits, and scheduler execution |
+| Database tests are skipped | `TEST_DATABASE_URL` is absent | Create a disposable `_test` database and rerun Vitest with the variable set |
+| E2E refuses to start | Missing or unsafe test database URL | Set `TEST_DATABASE_URL` to a writable PostgreSQL database ending in `_test` |
+| Port 3000 is already in use | Another development server is running | Stop it or start Next.js on an alternate port with `bun --filter @lol/web dev -- --port 3001` |
+| New live matches do not publish immediately after a patch | Data Dragon and the live game version are temporarily out of sync | Wait for matching TR Data Dragon metadata; unmatched versions remain unpublished by design |
+
+## Operations
+
+The README is the local developer entrypoint. Use the dedicated runbooks for
+production details:
+
+- [Collector operations](docs/operations/collector.md): scheduling, restart
+  semantics, exit codes, keys, rate limits, checkpoints, and health output.
+- [Web operations](docs/operations/web.md): read-only database grants, HTTPS,
+  caching, health checks, deployment ordering, and E2E database safety.
+- [Design specification](docs/superpowers/specs/2026-08-01-lol-item-statistics-design.md):
+  product scope, methodology, data model, invariants, and security design.
+
+## Legal notice
+
+This product is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+
+This repository is an MVP focused on current-patch TR1 Ranked Solo item
+statistics. Any expansion to other queues, regions, modes, or historical data
+requires a separate methodology and policy review.
