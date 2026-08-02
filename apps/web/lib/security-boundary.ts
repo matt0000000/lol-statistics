@@ -166,17 +166,17 @@ function selectedPathMapping(specifier: string, options: ts.CompilerOptions): Se
   const paths = options.paths ?? {};
   const exact = paths[specifier];
   if (exact) return { targets: exact, substitution: "" };
-  const matches: Array<{ pattern: string; targets: string[]; substitution: string; prefixLength: number; suffixLength: number }> = [];
+  let match: { targets: string[]; substitution: string; prefixLength: number } | undefined;
   for (const [pattern, targets] of Object.entries(paths)) {
     const star = pattern.indexOf("*");
     if (star < 0) continue;
     const prefix = pattern.slice(0, star);
     const suffix = pattern.slice(star + 1);
     if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix) || specifier.length < prefix.length + suffix.length) continue;
-    matches.push({ pattern, targets, substitution: specifier.slice(prefix.length, specifier.length - suffix.length || undefined), prefixLength: prefix.length, suffixLength: suffix.length });
+    if (!match || prefix.length > match.prefixLength) {
+      match = { targets, substitution: specifier.slice(prefix.length, specifier.length - suffix.length || undefined), prefixLength: prefix.length };
+    }
   }
-  matches.sort((left, right) => right.prefixLength - left.prefixLength || right.suffixLength - left.suffixLength || left.pattern.localeCompare(right.pattern));
-  const match = matches[0];
   return match ? { targets: match.targets, substitution: match.substitution } : undefined;
 }
 

@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@foo/*": ["/tmp/security-boundary-round6/*", "./benign/*"],
+      "@foo/*bar": ["./benign/*"]
+    }
+  }
+}

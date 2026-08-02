@@ -101,4 +101,10 @@ describe("web security boundary", () => {
     const result = await scanClientBoundary(root);
     expect(result.violations, result.violations.join("\n")).toEqual([]);
   });
+
+  it("preserves TypeScript declaration order for equal-prefix wildcard aliases", async () => {
+    const root = join(process.cwd(), "apps/web/tests/security-alias-wildcard-order");
+    const result = await scanClientBoundary(root);
+    expect(result.violations.join("\n")).toMatch(/unresolved alias @foo\/filebar/);
+  });
 });
