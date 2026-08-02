@@ -1,18 +1,18 @@
 "use client";
 
-import type { PublicChampionSummary, PublicMeta } from "@lol/public-api";
+import type { PublicChampionSummary, PublicDatasetState, PublicMeta } from "@lol/public-api";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ScopeBar } from "./ScopeBar";
 import { roleLabel } from "./RoleSelector";
-import { DatasetBanner, datasetState } from "./DatasetBanner";
+import { DatasetBanner } from "./DatasetBanner";
 
 const MAX_SEARCH_LENGTH = 80;
 function fold(value: string): string {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-export function ChampionGrid({ champions, meta, warming = false }: { champions: PublicChampionSummary[]; meta?: PublicMeta | null; warming?: boolean }) {
+export function ChampionGrid({ champions, meta, warming = false, state }: { champions: PublicChampionSummary[]; meta?: PublicMeta | null; warming?: boolean; state: PublicDatasetState }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const needle = fold(query.trim().slice(0, MAX_SEARCH_LENGTH));
@@ -28,7 +28,7 @@ export function ChampionGrid({ champions, meta, warming = false }: { champions: 
           <input type="search" aria-label="Search champions" value={query} maxLength={MAX_SEARCH_LENGTH} onChange={(event) => setQuery(event.currentTarget.value.slice(0, MAX_SEARCH_LENGTH))} placeholder="Search by name" />
         </label>
       </div>
-      {filtered.length === 0 ? <p className="empty-state" role="status">No champions match your search.</p> :
+      {filtered.length === 0 && !(warming && champions.length === 0) ? <p className="empty-state" role="status">No champions match your search.</p> :
         <ul className="champion-grid" aria-label="Champions">
           {filtered.map((champion) => <li key={champion.championId}>
             <Link className="champion-card" href={`/champions/${encodeURIComponent(champion.slug)}`}>
@@ -38,7 +38,7 @@ export function ChampionGrid({ champions, meta, warming = false }: { champions: 
             </Link>
           </li>)}
         </ul>}
-      <DatasetBanner state={warming || !meta ? "warming" : datasetState(meta, new Date())} publishedAt={meta?.publishedAt} />
+      <DatasetBanner state={warming || !meta ? "warming" : state} publishedAt={meta?.publishedAt} />
     </section>
   );
 }

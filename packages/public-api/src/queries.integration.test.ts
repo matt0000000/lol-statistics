@@ -58,9 +58,9 @@ integration("public views and query repository", () => {
     isolated = await createMigratedTestDatabase(sourceUrl!);
     const [stalePatch] = await isolated.db.insert(patches).values({ version: "16.15.1", patchKey: "16.15", isActive: false }).returning({ id: patches.id });
     const [patch] = await isolated.db.insert(patches).values({ version: "16.16.1", patchKey: "16.16", isActive: true }).returning({ id: patches.id });
-    const [staleRun] = await isolated.db.insert(collectionRuns).values({ status: "COMPLETED", stage: "publish" }).returning({ id: collectionRuns.id });
+    const [staleRun] = await isolated.db.insert(collectionRuns).values({ patchId: stalePatch!.id, status: "COMPLETED", stage: "publish" }).returning({ id: collectionRuns.id });
     await isolated.db.insert(aggregatePublications).values({ patchId: stalePatch!.id, runId: staleRun!.id, coverageStartedAt: new Date("2026-07-01T00:00:00Z"), isActive: false });
-    const [run] = await isolated.db.insert(collectionRuns).values({ status: "COMPLETED", stage: "publish", minimumSample: 100 }).returning({ id: collectionRuns.id });
+    const [run] = await isolated.db.insert(collectionRuns).values({ patchId: patch!.id, status: "RUNNING", stage: "matches", minimumSample: 100, matchesDiscovered: 7, matchesIngested: 5, observationsAccepted: 42, observationsRejected: 3 }).returning({ id: collectionRuns.id });
     const [publication] = await isolated.db.insert(aggregatePublications).values({ patchId: patch!.id, runId: run!.id, coverageStartedAt: new Date("2026-08-01T00:00:00Z"), collectedAt: new Date("2026-08-02T00:00:00Z"), isActive: true }).returning({ id: aggregatePublications.id });
     activePatchId = patch!.id;
     activePublicationId = publication!.id;
@@ -283,6 +283,22 @@ integration("public views and query repository", () => {
     }
   });
 
+  it("ignores an active publication pointer from a different patch", async () => {
+    const [stalePublication] = await isolated.db.select({ id: aggregatePublications.id }).from(aggregatePublications).where(eq(aggregatePublications.patchId, (await isolated.db.select({ id: patches.id }).from(patches).where(eq(patches.patchKey, "16.15")).limit(1))[0]!.id)).limit(1);
+    const [currentPatch] = await isolated.db.select({ id: patches.id, activePublicationId: patches.activePublicationId }).from(patches).where(eq(patches.patchKey, "16.16")).limit(1);
+    if (!stalePublication || !currentPatch) throw new Error("fixture missing");
+    try {
+      await isolated.db.execute(`UPDATE aggregate_publications SET is_active = true WHERE id = '${stalePublication.id}'` as never);
+      await isolated.db.update(patches).set({ activePublicationId: stalePublication.id }).where(eq(patches.id, currentPatch.id));
+      await expect(createPublicQueries(isolated.db).meta()).resolves.toEqual({ code: "dataset_warming" });
+      const status = await createPublicQueries(isolated.db).status();
+      expect("code" in status ? status : status.datasetState).toBe("warming");
+    } finally {
+      await isolated.db.update(patches).set({ activePublicationId: currentPatch.activePublicationId }).where(eq(patches.id, currentPatch.id));
+      await isolated.db.execute(`UPDATE aggregate_publications SET is_active = false WHERE id = '${stalePublication.id}'` as never);
+    }
+  });
+
   it("returns strict methodology output", async () => {
     publicMethodologySchema.parse(await createPublicQueries(isolated.db).methodology());
   });
@@ -293,6 +309,9 @@ integration("public views and query repository", () => {
     if (!("code" in status)) {
       publicStatusSchema.parse(status);
       expect(status.patch.key).toBe("16.16");
+      expect(status.runStatus).toBe("RUNNING");
+      expect(status.stage).toBe("MATCHES");
+      expect(status.counters).toEqual({ matchesDiscovered: 7, matchesIngested: 5, observationsAccepted: 42, observationsRejected: 3 });
       expect(status.eligibleSamplesByRole.BOTTOM).toBe(1000);
       expect(JSON.stringify(status)).not.toMatch(/puuid|matchId|errorDetails|rawFinalSlots/i);
     }

@@ -74,4 +74,9 @@ describe("canonical schema integrity contract", () => {
     expect(migrationMetadata).toContain("\"active_publication_id\"");
     expect(readFileSync(new URL("../../../migrations/meta/_journal.json", import.meta.url), "utf8")).toContain("0008_ambitious_hitman");
   });
+
+  it("keeps public status active publication tied to the current patch", () => {
+    const statusView = readFileSync(new URL("../../../migrations/0010_public_status.sql", import.meta.url), "utf8");
+    expect(statusView).toMatch(/active_publication_id\s*=\s*ap\.id\s+AND\s+ap\.patch_id\s*=\s*p\.id/i);
+  });
 });

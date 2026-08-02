@@ -17,7 +17,7 @@ function queries(overrides: Partial<PublicQueries> = {}): PublicQueries {
     championBySlug: async () => champion,
     champion: async () => champion,
     stats: async () => ({ code: "role_not_found" }),
-    methodology: async () => ({ version: "1", scope: meta.scope, formulas: { rawWinRate: "", buildRate: "", baselineDelta: "", adjustedScore: "" }, minimumSample: 100, lowConfidence: "", limitations: [""] }),
+    methodology: async () => ({ version: "1", scope: meta.scope, formulas: { rawWinRate: "", buildRate: "", baselineDelta: "", adjustedScore: "" }, minimumSample: 100, lowConfidence: "", limitations: [""], collectorRules: { durationMinimumSeconds: 300, remakeRule: "Reject remakes when any participant is flagged early surrender.", teamPositionMapping: { TOP: "TOP", JUNGLE: "JUNGLE", MIDDLE: "MIDDLE", BOTTOM: "BOTTOM", UTILITY: "UTILITY" } } }),
     status: async () => ({ code: "dataset_warming" }),
     ...overrides
   };

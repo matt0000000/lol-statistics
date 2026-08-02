@@ -169,7 +169,14 @@ export const publicMethodologySchema = z.object({
   formulas: z.object({ rawWinRate: z.string().min(1), buildRate: z.string().min(1), baselineDelta: z.string().min(1), adjustedScore: z.string().min(1) }).strict(),
   minimumSample: nonnegativeInteger,
   lowConfidence: z.string().min(1),
-  limitations: z.array(z.string().min(1)).min(1)
+  limitations: z.array(z.string().min(1)).min(1),
+  collectorRules: z.object({
+    durationMinimumSeconds: z.literal(300),
+    remakeRule: z.literal("Reject remakes when any participant is flagged early surrender."),
+    teamPositionMapping: z.object({
+      TOP: z.literal("TOP"), JUNGLE: z.literal("JUNGLE"), MIDDLE: z.literal("MIDDLE"), BOTTOM: z.literal("BOTTOM"), UTILITY: z.literal("UTILITY")
+    }).strict()
+  }).strict()
 }).strict();
 export type PublicMethodology = z.infer<typeof publicMethodologySchema>;
 

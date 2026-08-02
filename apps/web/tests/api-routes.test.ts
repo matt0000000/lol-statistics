@@ -10,7 +10,7 @@ const meta: PublicMeta = {
 };
 const champion: PublicChampion = { championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://example.test/jinx.png", splashUrl: null, roles: ["BOTTOM"] };
 const summary: PublicChampionSummary = { championId: 222, slug: "jinx", name: "Jinx", iconUrl: "https://example.test/jinx.png", roles: ["BOTTOM"] };
-const methodology: PublicMethodology = { version: "1", scope: meta.scope, formulas: { rawWinRate: "wins / sample", buildRate: "sample / baseline", baselineDelta: "raw - baseline", adjustedScore: "Wilson" }, minimumSample: 100, lowConfidence: "hidden", limitations: ["correlation"] };
+const methodology: PublicMethodology = { version: "1", scope: meta.scope, formulas: { rawWinRate: "wins / sample", buildRate: "sample / baseline", baselineDelta: "raw - baseline", adjustedScore: "Wilson" }, minimumSample: 100, lowConfidence: "hidden", limitations: ["correlation"], collectorRules: { durationMinimumSeconds: 300, remakeRule: "Reject remakes when any participant is flagged early surrender.", teamPositionMapping: { TOP: "TOP", JUNGLE: "JUNGLE", MIDDLE: "MIDDLE", BOTTOM: "BOTTOM", UTILITY: "UTILITY" } } };
 const stats = publicStatsResponseSchema.parse({ meta, champion, role: "BOTTOM", baseline: { wins: 50, losses: 50, sample: 100, winRate: 0.5 }, view: "items", sort: "adjusted", includeLowConfidence: false, minimumSample: 100, rows: [] });
 
 const trustedScopes = new WeakMap<object, string>();

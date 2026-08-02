@@ -10,7 +10,7 @@ WITH current_patch AS (
   FROM collection_runs cr JOIN current_patch p ON p.id = cr.patch_id
   ORDER BY cr.patch_id, cr.updated_at DESC, cr.started_at DESC
 ), active_pub AS (
-  SELECT ap.* FROM aggregate_publications ap JOIN current_patch p ON p.active_publication_id = ap.id
+  SELECT ap.* FROM aggregate_publications ap JOIN current_patch p ON p.active_publication_id = ap.id AND ap.patch_id = p.id
   WHERE ap.is_active = true
 ), role_samples AS (
   SELECT b.publication_id,

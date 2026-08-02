@@ -38,6 +38,26 @@ export interface PublicQueries {
   status(): Promise<PublicStatus | PublicQueryError>;
 }
 
+/** Versioned public methodology contract consumed by the web disclosure page. */
+export const PUBLIC_METHODOLOGY: PublicMethodology = {
+  version: "1",
+  scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
+  formulas: {
+    rawWinRate: "wins / sample",
+    buildRate: "sample / champion-role baseline sample",
+    baselineDelta: "raw win rate - champion-role baseline win rate",
+    adjustedScore: "lower bound of a two-sided 95% Wilson score interval"
+  },
+  minimumSample: 100,
+  lowConfidence: "Rows below the publication minimum sample are hidden by default and never receive an adjusted recommendation score.",
+  limitations: ["These aggregates describe correlation, not causation.", "Completed-item results include survivorship and gold-lead bias.", "Rank is measured at collection time."],
+  collectorRules: {
+    durationMinimumSeconds: 300,
+    remakeRule: "Reject remakes when any participant is flagged early surrender.",
+    teamPositionMapping: { TOP: "TOP", JUNGLE: "JUNGLE", MIDDLE: "MIDDLE", BOTTOM: "BOTTOM", UTILITY: "UTILITY" }
+  }
+};
+
 type Row = Record<string, unknown>;
 const viewNames: Record<StatsView, string> = {
   items: "public_item_stats",
@@ -374,19 +394,7 @@ export function createPublicQueries(database: QueryDatabase): PublicQueries {
     },
 
     async methodology() {
-      return publicMethodologySchema.parse({
-        version: "1",
-        scope: { platform: "TR1", queue: 420, rank: "EMERALD+" },
-        formulas: {
-          rawWinRate: "wins / sample",
-          buildRate: "sample / champion-role baseline sample",
-          baselineDelta: "raw win rate - champion-role baseline win rate",
-          adjustedScore: "lower bound of a two-sided 95% Wilson score interval"
-        },
-        minimumSample: 100,
-        lowConfidence: "Rows below the publication minimum sample are hidden by default and never receive an adjusted recommendation score.",
-        limitations: ["These aggregates describe correlation, not causation.", "Completed-item results include survivorship and gold-lead bias.", "Rank is measured at collection time."]
-      });
+      return publicMethodologySchema.parse(PUBLIC_METHODOLOGY);
     },
 
     async status() {
