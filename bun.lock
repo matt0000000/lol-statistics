@@ -21,6 +21,7 @@
       "name": "@lol/collector",
       "dependencies": {
         "@lol/database": "workspace:*",
+        "@lol/domain": "workspace:*",
         "@lol/item-catalog": "workspace:*",
         "@lol/riot-client": "workspace:*",
       },
@@ -28,6 +29,7 @@
     "apps/web": {
       "name": "@lol/web",
       "dependencies": {
+        "@lol/public-api": "workspace:*",
         "next": "^16.2.12",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
@@ -54,6 +56,17 @@
         "@lol/database": "workspace:*",
         "@lol/domain": "workspace:*",
         "zod": "^4.4.3",
+      },
+    },
+    "packages/public-api": {
+      "name": "@lol/public-api",
+      "dependencies": {
+        "@lol/domain": "workspace:*",
+        "drizzle-orm": "^0.45.2",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@lol/database": "workspace:*",
       },
     },
     "packages/riot-client": {
@@ -184,6 +197,8 @@
     "@lol/domain": ["@lol/domain@workspace:packages/domain"],
 
     "@lol/item-catalog": ["@lol/item-catalog@workspace:packages/item-catalog"],
+
+    "@lol/public-api": ["@lol/public-api@workspace:packages/public-api"],
 
     "@lol/riot-client": ["@lol/riot-client@workspace:packages/riot-client"],
 

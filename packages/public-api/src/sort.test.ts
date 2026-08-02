@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import type { PublicStatRow } from "./contracts";
+import { sortStats } from "./sort";
+
+const row = (key: string, adjustedScore: number | null, sample: number): PublicStatRow => ({
+  key,
+  itemIds: key.split(":").map(Number),
+  wins: sample / 2,
+  losses: sample / 2,
+  sample,
+  rawWinRate: 0.5,
+  buildRate: 0.1,
+  baselineDelta: 0,
+  confidenceLower: adjustedScore ?? 0,
+  confidenceUpper: 0.6,
+  adjustedScore,
+  confidence: adjustedScore === null ? "low" : "recommended"
+});
+
+describe("sortStats", () => {
+  it("sorts recommended rows before low-confidence rows with stable ties", () => {
+    const sorted = sortStats([row("2", null, 3), row("3", 0.52, 100), row("1", 0.52, 200)], "adjusted");
+    expect(sorted.map((item) => item.key)).toEqual(["1", "3", "2"]);
+  });
+
+  it("uses the requested metric and canonical key as exact tie breakers", () => {
+    const sorted = sortStats([row("10:20", 0.4, 100), row("2:30", 0.5, 100)], "sample");
+    expect(sorted.map((item) => item.key)).toEqual(["10:20", "2:30"]);
+  });
+});

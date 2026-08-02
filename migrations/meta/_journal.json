@@ -64,6 +64,13 @@
       "when": 1785627029095,
       "tag": "0008_ambitious_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785630000000,
+      "tag": "0009_public_views",
+      "breakpoints": true
     }
   ]
 }

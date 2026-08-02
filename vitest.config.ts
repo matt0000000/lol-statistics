@@ -7,7 +7,7 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: ["apps/collector/**/*.test.ts", "packages/**/*.test.ts"]
+          include: ["apps/collector/**/*.test.ts", "packages/**/*.test.ts", "apps/web/**/*.test.ts"]
         }
       }
     ]
